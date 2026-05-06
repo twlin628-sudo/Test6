@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>WAR.SH</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
+:root{
+  --bg:#0b0d0f;--panel:#111518;--bdr:#1c2a1c;
+  --g:#4dff7c;--g2:#2aaa50;--g3:#0d2a18;
+  --r:#ff4444;--r2:#7a1a1a;--b:#44aaff;
+  --y:#ffcc44;--y2:#7a6010;
+  --fog:#060708;--seen:#0c0f0c;--vis:#0e180f;
+  --txt:#8aaa8a;--dim:#3a5a3a;
+  --cs:44px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;background:var(--bg);}
+body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height:100dvh;color:var(--g);user-select:none;}
+
+/* ─ MENU ─ */
+#menu{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;gap:18px;padding:32px;
+  background:radial-gradient(ellipse at 50% 40%,#0d2018 0%,var(--bg) 65%);}
+.logo{font-family:'Share Tech Mono',monospace;font-size:clamp(2.4rem,11vw,4.5rem);
+  color:var(--g);letter-spacing:.05em;animation:glow 2.5s ease-in-out infinite;}
+@keyframes glow{0%,100%{text-shadow:0 0 30px #4dff7c55;}50%{text-shadow:0 0 60px #4dff7caa;}}
+.logo-sub{font-size:12px;color:var(--dim);letter-spacing:.4em;margin-top:-12px;}
+.mbtn{width:100%;max-width:300px;padding:15px 20px;background:transparent;
+  border:1px solid var(--g2);color:var(--g);font-family:'Rajdhani';font-size:16px;
+  font-weight:700;letter-spacing:.1em;cursor:pointer;position:relative;text-align:left;}
+.mbtn::after{content:'▶';position:absolute;right:16px;color:var(--g2);font-size:11px;}
+.mbtn:active{background:var(--g3);}
+.mbtn.pri{border-color:var(--g);}
+
+/* ─ PEER OVERLAY ─ */
+#peer-ovl{display:none;position:fixed;inset:0;background:#000c;z-index:200;
+  align-items:center;justify-content:center;}
+#peer-ovl.show{display:flex;}
+#peer-box{background:var(--panel);border:1px solid var(--g2);padding:24px 20px;
+  width:90%;max-width:320px;display:flex;flex-direction:column;gap:12px;align-items:center;}
+#peer-box h3{font-family:'Share Tech Mono';font-size:.95rem;color:var(--g);text-align:center;letter-spacing:.1em;}
+#peer-room-code{font-size:0.85rem;letter-spacing:.08em;color:var(--y);font-family:'Share Tech Mono';
+  text-align:center;padding:8px;word-break:break-all;background:var(--g3);width:100%;}
+#peer-input{background:var(--g3);border:1px solid var(--g2);color:var(--g);
+  padding:10px;font-family:'Share Tech Mono';font-size:1.6rem;letter-spacing:.25em;
+  width:100%;text-align:center;outline:none;}
+#peer-msg{font-size:12px;color:var(--txt);text-align:center;line-height:1.5;}
+.pbtn{padding:11px 28px;background:var(--g3);border:1px solid var(--g);color:var(--g);
+  font-family:'Rajdhani';font-size:15px;font-weight:700;cursor:pointer;width:100%;}
+.pbtn.dim{border-color:var(--dim);color:var(--dim);background:transparent;}
+
+/* ─ GAME ─ */
+#game{display:none;flex-direction:column;height:100dvh;}
+
+/* HUD */
+#hud{display:flex;align-items:center;background:var(--panel);
+  border-bottom:1px solid var(--bdr);flex-shrink:0;height:40px;padding:0 8px;}
+.hr{display:flex;align-items:center;gap:4px;padding:0 8px;
+  border-right:1px solid var(--bdr);height:100%;font-size:14px;font-weight:700;}
+.hr-v{color:var(--y);}
+.hr-l{color:var(--dim);font-size:11px;}
+#h-tick{margin-left:auto;font-family:'Share Tech Mono';font-size:11px;color:var(--dim);}
+#speed-btn{margin-left:6px;padding:2px 8px;background:var(--g3);border:1px solid var(--g2);
+  color:var(--g);font-size:11px;cursor:pointer;font-family:'Share Tech Mono';}
+#menu-btn{margin-left:4px;padding:2px 8px;background:transparent;border:1px solid var(--dim);
+  color:var(--dim);font-size:11px;cursor:pointer;font-family:'Share Tech Mono';}
+
+/* MAP AREA */
+#map-wrap{flex:1;overflow:hidden;position:relative;background:var(--fog);cursor:default;}
+#map-canvas{position:absolute;top:0;left:0;touch-action:none;}
+
+/* CELLS */
+.cell{position:absolute;width:var(--cs);height:var(--cs);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;border:1px solid transparent;overflow:hidden;}
+.cell.fog{background:var(--fog);}
+.cell.seen{background:var(--seen);}
+.cell.vis{background:var(--vis);}
+/* highlights */
+.cell.h-sel{border-color:var(--g)!important;box-shadow:inset 0 0 8px #4dff7c33;}
+.cell.h-build{border-color:var(--g2)!important;background:#4dff7c08!important;}
+/* coord label */
+.clbl{position:absolute;top:1px;left:2px;font-size:7px;color:var(--dim);
+  opacity:.5;font-family:'Share Tech Mono';pointer-events:none;}
+/* hp bar */
+.hpb{position:absolute;bottom:1px;left:2px;right:2px;height:3px;background:#111;border-radius:1px;}
+.hpf{height:100%;border-radius:1px;}
+.hpf.my{background:var(--g);}
+.hpf.en{background:var(--r);}
+.hpf.lo{background:var(--y);}
+/* drag box for multi-select */
+#dragbox{position:absolute;pointer-events:none;
+  border:1px dashed var(--g);background:#4dff7c08;display:none;z-index:5;}
+
+/* BOTTOM PANEL */
+#bottom{flex-shrink:0;background:var(--panel);border-top:1px solid var(--bdr);
+  display:flex;flex-direction:column;min-height:120px;max-height:42vh;}
+#info-bar{display:flex;align-items:center;gap:8px;padding:5px 12px;
+  border-bottom:1px solid var(--bdr);flex-shrink:0;min-height:32px;}
+#i-icon{font-size:17px;}
+#i-name{color:var(--g);font-size:13px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;}
+#i-hp{color:var(--txt);font-size:11px;white-space:nowrap;}
+#i-state{font-size:11px;color:var(--y);margin-left:4px;white-space:nowrap;}
+#action-bar{display:flex;flex-wrap:wrap;gap:5px;padding:6px 10px;
+  overflow-y:auto;flex:1;align-content:flex-start;}
+.ab{padding:7px 12px;background:var(--g3);border:1px solid var(--g2);color:var(--g);
+  font-family:'Rajdhani';font-size:14px;font-weight:700;cursor:pointer;
+  border-radius:2px;white-space:nowrap;}
+.ab:active{background:var(--g2);}
+.ab.rd{border-color:var(--r2);color:var(--r);background:#180808;}
+.ab.yl{border-color:var(--y2);color:var(--y);background:#181200;}
+.ab.off{opacity:.3;pointer-events:none;}
+.ab .co{font-size:10px;color:var(--dim);}
+.hint{color:var(--dim);font-size:12px;padding:6px 4px;line-height:1.7;align-self:center;}
+#logbar{border-top:1px solid var(--bdr);padding:3px 12px;font-family:'Share Tech Mono';
+  font-size:11px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;}
+
+/* WIN */
+#win-ovl{display:none;position:fixed;inset:0;background:#000c;z-index:300;
+  align-items:center;justify-content:center;flex-direction:column;gap:14px;}
+#win-ovl.show{display:flex;}
+#win-txt{font-family:'Share Tech Mono';font-size:2rem;color:var(--g);text-shadow:0 0 30px var(--g);}
+#win-sub{color:var(--txt);font-size:13px;}
+
+@keyframes hit{0%,100%{opacity:1}50%{opacity:.25}}
+.cell.hit-fx{animation:hit .18s ease-in-out 2;}
+</style>
+</head>
+<body>
+
+<!-- MENU -->
+<div id="menu">
+  <div class="logo">WAR.SH</div>
+  <div class="logo-sub">點選即時戰略</div>
+  <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
+  <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
+  <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
+</div>
+
+<!-- PEER OVERLAY -->
+<div id="peer-ovl">
+  <div id="peer-box">
+    <h3 id="peer-title">──  ──</h3>
+    <div id="peer-room-code" style="display:none"></div>
+    <input id="peer-input" maxlength="60" placeholder="貼上 Host 的ID"
+      style="display:none" oninput="this.value=this.value.trim()">
+    <div id="peer-msg">初始化...</div>
+    <button class="pbtn" id="peer-connect-btn" onclick="guestConnect()" style="display:none">連線</button>
+    <button class="pbtn dim" onclick="closePeer()">取消</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="game">
+  <div id="hud">
+    <div class="hr"><span>🪙</span><span class="hr-v" id="h-gold">0</span></div>
+    <div class="hr"><span>🌲</span><span class="hr-v" id="h-wood">0</span></div>
+    <div class="hr"><span>🍖</span><span class="hr-v" id="h-food">0</span><span class="hr-l">/</span><span class="hr-v" id="h-fmax">10</span></div>
+    <div id="h-tick" style="margin-left:auto;font-family:'Share Tech Mono';font-size:11px;color:var(--dim)">T0</div>
+    <button id="speed-btn" onclick="cycleSpeed()">1x</button>
+    <button id="menu-btn" onclick="goMenu()">離開</button>
+  </div>
+  <div id="map-wrap">
+    <div id="map-canvas"></div>
+    <div id="dragbox"></div>
+  </div>
+  <div id="bottom">
+    <div id="info-bar">
+      <span id="i-icon">🗺️</span>
+      <span id="i-name">點選單位或建築</span>
+      <span id="i-hp"></span>
+      <span id="i-state"></span>
+    </div>
+    <div id="action-bar"><span class="hint">點我方👷Worker或⚔️士兵開始<br>拖曳可框選多個單位</span></div>
+    <div id="logbar">── WAR.SH 開始 ──</div>
+  </div>
+</div>
+
+<!-- WIN -->
+<div id="win-ovl">
+  <div id="win-txt"></div>
+  <div id="win-sub"></div>
+  <button class="pbtn" onclick="goMenu()" style="max-width:200px;margin-top:8px">返回主選單</button>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+'use strict';
+// ════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════
+const MW=24, MH=20, CS=44, TICK_MS=1000;
+const T={E:0,G:1,W:2,M:3}; // terrain: Empty Gold Wood Mountain
+const IC={ // icons
+  townhall:'🏰',farm:'🌾',barracks:'⚔️',tower:'🗼',
+  worker:'👷',soldier:'🗡️',archer:'🏹',
+  e_townhall:'🏯',e_farm:'🌾',e_barracks:'🔴',e_tower:'🗽',
+  e_worker:'👺',e_soldier:'👹',e_archer:'👻',
+};
+const BD={ // building defs
+  townhall:{cost:{g:0,w:0},  hp:300,food:10,bt:0 },
+  farm:    {cost:{g:60,w:30},hp:80, food:5, bt:8 },
+  barracks:{cost:{g:120,w:50},hp:120,food:0,bt:12},
+  tower:   {cost:{g:100,w:80},hp:150,food:0,bt:15,atk:6,rng:3},
+};
+const UD={ // unit defs
+  worker: {cost:{g:50}, hp:30, atk:2, rng:1,vis:3,food:0},
+  soldier:{cost:{g:80}, hp:80, atk:8, rng:1,vis:2,food:1},
+  archer: {cost:{g:100},hp:50, atk:5, rng:3,vis:3,food:1},
+};
+
+// ════════════════════════════════════
+// GAME STATE
+// ════════════════════════════════════
+let G={};
+let tickTmr=null, speedLv=1, gameMode='solo';
+
+// ─ Selection / Interaction ─
+// phase: idle | sel | build_place
+// selUnits: [unit,...] (my units currently selected)
+// selBldg: building | null
+// buildType: string when phase=build_place
+let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null};
+
+// ─ Pointer state for drag-select vs scroll vs tap ─
+let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false};
+
+// ════════════════════════════════════
+// PEER
+// ════════════════════════════════════
+let peer=null, conn=null, peerRole=null; // role: 'host'|'guest'
+
+function openPeer(role){
+  peerRole=role;
+  if(peer){try{peer.destroy();}catch(e){} peer=null; conn=null;}
+  document.getElementById('peer-ovl').classList.add('show');
+  document.getElementById('peer-title').textContent= role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
+  document.getElementById('peer-room-code').style.display='none';
+  document.getElementById('peer-input').style.display= role==='guest'?'block':'none';
+  document.getElementById('peer-connect-btn').style.display='none';
+  document.getElementById('peer-msg').textContent='連線 PeerJS 伺服器中...';
+
+  const timeout=setTimeout(()=>{
+    document.getElementById('peer-msg').textContent='❌ 無法連線 PeerJS。請確認網路，或用單人模式測試。';
+  }, 8000);
+
+  peer=new Peer();
+  peer.on('open', myId=>{
+    clearTimeout(timeout);
+    if(role==='host'){
+      document.getElementById('peer-room-code').textContent=myId;
+      document.getElementById('peer-room-code').style.display='block';
+      document.getElementById('peer-msg').textContent='↑ 將此ID傳給對方貼上，等待連線...';
+      peer.on('connection', c=>setupConn(c,'host'));
+    } else {
+      document.getElementById('peer-msg').textContent='將 Host 的ID貼入後按連線';
+      document.getElementById('peer-connect-btn').style.display='block';
+    }
+  });
+  peer.on('error', e=>{
+    clearTimeout(timeout);
+    document.getElementById('peer-msg').textContent='❌ 錯誤: '+e.type;
+  });
+}
+
+function guestConnect(){
+  const code=document.getElementById('peer-input').value.trim();
+  if(code.length<6){alert('請貼上完整的Host ID');return;}
+  document.getElementById('peer-msg').textContent='連線中...';
+  document.getElementById('peer-connect-btn').style.display='none';
+  const c=peer.connect(code);
+  setupConn(c,'guest');
+}
+
+function setupConn(c, role){
+  conn=c;
+  c.on('open',()=>{
+    document.getElementById('peer-msg').textContent='✅ 連線成功！';
+    setTimeout(()=>{
+      closePeer();
+      // Host is P1, guest is P2
+      gameMode= role==='host'?'host':'guest';
+      if(role==='host'){
+        startMulti();
+      } else {
+        // Guest waits for host to send initial state
+        startMultiGuest();
+      }
+    },700);
+  });
+  c.on('data', onPeerMsg);
+  c.on('close',()=>glog('⚠️ 對方斷線'));
+  c.on('error',e=>glog('❌ 連線錯誤: '+e));
+}
+
+function closePeer(){document.getElementById('peer-ovl').classList.remove('show');}
+
+// Host sends compact command, guest executes + sends ack
+// Protocol: {t:'init',state} | {t:'cmd',cmd} | {t:'tick',g} 
+function sendCmd(cmd){ if(conn&&conn.open) conn.send({t:'cmd',cmd}); }
+function sendState(){ if(conn&&conn.open) conn.send({t:'tick',g:serializeG()}); }
+
+function onPeerMsg(msg){
+  if(msg.t==='init'||msg.t==='tick'){
+    deserializeG(msg.g);
+    updateFog(); updateHUD(); render();
+  }
+  if(msg.t==='cmd'){
+    execCmd(msg.cmd, 2); // execute as P2 on host
+    // host re-sends state
+    if(gameMode==='host') sendState();
+  }
+}
+
+function serializeG(){
+  return {
+    tick:G.tick, players:G.players,
+    buildings:G.buildings.map(b=>({...b})),
+    units:G.units.map(u=>({...u})),
+  };
+}
+function deserializeG(s){
+  G.tick=s.tick; G.players=s.players;
+  G.buildings=s.buildings; G.units=s.units;
+}
+
+function startMulti(){
+  initGame(1); // host = P1
+  glog('Host 開始，等待 Guest 操作');
+  tickTmr=setInterval(multiTick, TICK_MS);
+}
+function startMultiGuest(){
+  // Build empty game, wait for state
+  document.getElementById('menu').style.display='none';
+  document.getElementById('game').style.display='flex';
+  glog('Guest 連線成功，等待遊戲同步...');
+}
+
+function multiTick(){
+  tick(1);   // simulate P1+P2 (AI off)
+  sendState(); // broadcast to guest
+}
+
+function execCmd(cmd, forPlayer){
+  // Remote command execution (future: full cmd serialization)
+  // Basic implementation placeholder
+}
+
+// ════════════════════════════════════
+// INIT
+// ════════════════════════════════════
+function startSolo(){ gameMode='solo'; initGame(1); }
+
+function initGame(myPlayer){
+  document.getElementById('menu').style.display='none';
+  document.getElementById('game').style.display='flex';
+  speedLv=1; document.getElementById('speed-btn').textContent='1x';
+  G={
+    tick:0, over:false, winner:null, myP:myPlayer,
+    res:{1:{gold:150,wood:100,food:0,foodMax:10},2:{gold:150,wood:100,food:0,foodMax:10}},
+    map:[], fog:[[],[]], bldgs:[], units:[],
+    uc:{1:{w:0,s:0,a:0},2:{w:0,s:0,a:0}}, bc:1,
+  };
+  buildMap(); placeStart(); updateFog();
+  buildDOM(); updateHUD(); render(); resetSel();
+  setTimeout(()=>{
+    const wrap=el('map-wrap');
+    wrap.scrollLeft=0; wrap.scrollTop=Math.max(0,9*CS-wrap.clientHeight/2);
+  },50);
+  glog('點選👷Worker → 點💰採金 / 點空地移動 / 點建築建造');
+  if(gameMode==='solo'){
+    clearInterval(tickTmr);
+    tickTmr=setInterval(()=>{tick(1);if(G.over)clearInterval(tickTmr);},TICK_MS);
+  }
+}
+
+function buildMap(){
+  for(let y=0;y<MH;y++){
+    G.map.push([]);G.fog[0].push([]);G.fog[1].push([]);
+    for(let x=0;x<MW;x++){G.map[y].push(T.E);G.fog[0][y].push('h');G.fog[1][y].push('h');}
+  }
+  // Mountains
+  [[5,5],[6,5],[5,6],[7,8],[8,8],[16,11],[17,11],[16,12],[11,9],[12,9],[11,10]].forEach(([x,y])=>setTile(x,y,T.M));
+  // Trees
+  [[3,2],[4,3],[3,4],[17,15],[18,16],[17,14],[8,3],[9,4],[14,14],[15,15],[6,9],[7,10],[13,8],[14,9],[10,3],[11,4],[13,16],[14,17]].forEach(([x,y])=>setTile(x,y,T.W));
+  // Gold mines
+  [[2,2],[20,2],[2,17],[20,17],[11,7],[11,13]].forEach(([x,y])=>setTile(x,y,T.G));
+}
+function setTile(x,y,t){if(inB(x,y))G.map[y][x]=t;}
+
+function placeStart(){
+  addBldg('townhall',1,1,9);  addBldg('townhall',2,22,10);
+  addUnit('worker',1,2,9);    addUnit('worker',1,1,10);
+  addUnit('worker',2,21,10);  addUnit('worker',2,22,9);
+}
+
+function addBldg(type,owner,x,y,underConst=false){
+  const d=BD[type];
+  const id='b'+G.bc++;
+  G.bldgs.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,
+    bp:underConst?0:d.bt, bt:d.bt, uc:underConst, tq:[],tp:0});
+  if(d.food&&!underConst) G.res[owner].foodMax+=d.food;
+  return id;
+}
+
+function addUnit(type,owner,x,y){
+  const d=UD[type];
+  const pk=type[0]; // w/s/a
+  G.uc[owner][pk]++;
+  const id=pk+G.uc[owner][pk]+'p'+owner;
+  G.units.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,
+    atk:d.atk,rng:d.rng,vis:d.vis,food:d.food,
+    act:null,tgt:null}); // act: null|'move'|'harvest'|'attack'
+  G.res[owner].food+=d.food;
+  return id;
+}
+
+// ════════════════════════════════════
+// FOG OF WAR
+// ════════════════════════════════════
+function updateFog(){
+  // decay vis→seen
+  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
+    if(G.fog[0][y][x]==='v') G.fog[0][y][x]='s';
+    if(G.fog[1][y][x]==='v') G.fog[1][y][x]='s';
+  }
+  // reveal around all entities
+  [...G.units,...G.bldgs].forEach(e=>{
+    const v=e.vis||(BD[e.type]?.rng?BD[e.type].rng+1:2);
+    for(let dy=-v;dy<=v;dy++) for(let dx=-v;dx<=v;dx++){
+      const nx=e.x+dx,ny=e.y+dy;
+      if(inB(nx,ny)&&Math.abs(dx)+Math.abs(dy)<=v+1)
+        G.fog[e.owner-1][ny][nx]='v';
+    }
+  });
+}
+
+function fog1(x,y){return G.fog[0][y]?.[x];} // fog state for P1
+
+// ════════════════════════════════════
+// BUILD DOM
+// ════════════════════════════════════
+let CE={}; // cell elements keyed "x,y"
+
+function buildDOM(){
+  const canvas=el('map-canvas');
+  canvas.innerHTML='';
+  canvas.style.width=(MW*CS)+'px';
+  canvas.style.height=(MH*CS)+'px';
+  CE={};
+  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
+    const d=document.createElement('div');
+    d.className='cell fog'; d.dataset.x=x; d.dataset.y=y;
+    d.style.left=(x*CS)+'px'; d.style.top=(y*CS)+'px';
+    d.innerHTML=`<span class="clbl">${cs(x,y)}</span><span class="ci"></span>`+
+                `<div class="hpb" style="display:none"><div class="hpf my"></div></div>`;
+    CE[`${x},${y}`]=d;
+    canvas.appendChild(d);
+  }
+  setupPointer();
+}
+
+// ════════════════════════════════════
+// RENDER
+// ════════════════════════════════════
+function render(){
+  // build lookup maps
+  const bAt={},uAt={};
+  G.bldgs.forEach(b=>{bAt[`${b.x},${b.y}`]=b;});
+  G.units.forEach(u=>{const k=`${u.x},${u.y}`;if(!uAt[k])uAt[k]=[];uAt[k].push(u);});
+
+  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
+    const d=CE[`${x},${y}`];
+    const f=fog1(x,y); // h|s|v
+    const ci=d.querySelector('.ci');
+    const hpb=d.querySelector('.hpb');
+    const hpf=d.querySelector('.hpf');
+
+    d.className='cell '+(f==='h'?'fog':f==='s'?'seen':'vis');
+
+    if(f==='h'){ci.textContent='';hpb.style.display='none';continue;}
+
+    // terrain
+    const t=G.map[y][x];
+    let icon=t===T.G?'💰':t===T.W?'🌲':t===T.M?'🏔️':'';
+    let hp=0,mhp=1,isEn=false;
+
+    // building
+    const b=bAt[`${x},${y}`];
+    if(b&&(f==='v'||b.owner===1)){
+      icon=b.uc?'🏗️':(b.owner===2?(IC['e_'+b.type]||'🏯'):(IC[b.type]||'🏠'));
+      hp=b.hp;mhp=b.mhp;isEn=b.owner===2;
+    }
+    // units (top priority, only if visible)
+    const us=uAt[`${x},${y}`];
+    if(us&&f==='v'){
+      const myU=us.find(u=>u.owner===1),enU=us.find(u=>u.owner===2);
+      const show=myU||enU;
+      if(show){icon=(show.owner===2?(IC['e_'+show.type]||'👾'):(IC[show.type]));hp=show.hp;mhp=show.mhp;isEn=show.owner===2;}
+      if(us.length>1) icon+='⁺';
+    }
+
+    ci.textContent=icon;
+    if(hp>0){
+      hpb.style.display='block';
+      const pct=Math.max(0,hp/mhp*100);
+      hpf.style.width=pct+'%';
+      hpf.className='hpf '+(isEn?'en':pct<30?'lo':'my');
+    } else hpb.style.display='none';
+  }
+  applyHighlights();
+}
+
+function applyHighlights(){
+  Object.values(CE).forEach(d=>d.classList.remove('h-sel','h-build'));
+  SEL.selUnits.forEach(u=>CE[`${u.x},${u.y}`]?.classList.add('h-sel'));
+  if(SEL.selBldg) CE[`${SEL.selBldg.x},${SEL.selBldg.y}`]?.classList.add('h-sel');
+  if(SEL.phase==='build_place'){
+    for(let y=0;y<MH;y++) for(let x=0;x<MW;x++)
+      if(canBuild(x,y)&&fog1(x,y)!=='h') CE[`${x},${y}`]?.classList.add('h-build');
+  }
+}
+
+// ════════════════════════════════════
+// POINTER HANDLING
+// Separate: scroll (1-finger, no unit down) vs drag-select (1-finger, unit down)
+// ════════════════════════════════════
+function setupPointer(){
+  const wrap=el('map-wrap');
+  wrap.addEventListener('touchstart', onTS, {passive:false});
+  wrap.addEventListener('touchmove',  onTM, {passive:false});
+  wrap.addEventListener('touchend',   onTE, {passive:false});
+  wrap.addEventListener('mousedown',  onMD);
+  wrap.addEventListener('mousemove',  onMM);
+  wrap.addEventListener('mouseup',    onMU);
+}
+
+function cellAt(cx,cy){
+  const wrap=el('map-wrap');
+  const r=wrap.getBoundingClientRect();
+  const gx=Math.floor((cx-r.left+wrap.scrollLeft)/CS);
+  const gy=Math.floor((cy-r.top +wrap.scrollTop )/CS);
+  return inB(gx,gy)?{x:gx,y:gy}:null;
+}
+
+function ptStart(cx,cy){
+  const wrap=el('map-wrap');
+  PT.down=true; PT.moved=false; PT.dragging=false; PT.mode=null;
+  PT.startX=cx; PT.startY=cy;
+  PT.startScrX=wrap.scrollLeft; PT.startScrY=wrap.scrollTop;
+}
+function ptMove(cx,cy){
+  if(!PT.down) return false;
+  const dx=cx-PT.startX, dy=cy-PT.startY;
+  if(Math.abs(dx)<10&&Math.abs(dy)<10) return false;
+  PT.moved=true;
+  if(!PT.mode) PT.mode = SEL.selUnits.length>0 ? 'drag' : 'scroll';
+  if(PT.mode==='drag'){ PT.dragging=true; updateDragBox(cx,cy); }
+  else { const w=el('map-wrap'); w.scrollLeft=PT.startScrX-dx; w.scrollTop=PT.startScrY-dy; }
+  return true;
+}
+function ptEnd(cx,cy){
+  if(!PT.down) return;
+  PT.down=false;
+  el('dragbox').style.display='none';
+  if(PT.dragging) finalizeDrag(cx,cy);
+  else if(!PT.moved){ const c=cellAt(cx,cy); if(c) onTap(c.x,c.y); }
+  PT.dragging=false; PT.mode=null;
+}
+
+function onTS(e){ if(e.touches.length>1){PT.down=false;return;} e.preventDefault(); const t=e.touches[0]; ptStart(t.clientX,t.clientY); }
+function onTM(e){ if(!PT.down) return; e.preventDefault(); const t=e.touches[0]; ptMove(t.clientX,t.clientY); }
+function onTE(e){ if(!PT.down) return; const t=e.changedTouches[0]; ptEnd(t.clientX,t.clientY); }
+function onMD(e){ if(e.button!==0) return; ptStart(e.clientX,e.clientY); }
+function onMM(e){ ptMove(e.clientX,e.clientY); }
+function onMU(e){ ptEnd(e.clientX,e.clientY); }
+
+function updateDragBox(cx,cy){
+  const db=el('dragbox');
+  const wrap=el('map-wrap');
+  const r=wrap.getBoundingClientRect();
+  const ax=Math.min(PT.startX,cx)-r.left+wrap.scrollLeft;
+  const ay=Math.min(PT.startY,cy)-r.top +wrap.scrollTop;
+  const bx=Math.max(PT.startX,cx)-r.left+wrap.scrollLeft;
+  const by=Math.max(PT.startY,cy)-r.top +wrap.scrollTop;
+  db.style.display='block';
+  db.style.left=ax+'px'; db.style.top=ay+'px';
+  db.style.width=(bx-ax)+'px'; db.style.height=(by-ay)+'px';
+}
+
+function finalizeDrag(ex,ey){
+  const wrap=el('map-wrap');
+  const r=wrap.getBoundingClientRect();
+  const ax=Math.min(PT.startX,ex)-r.left+wrap.scrollLeft;
+  const ay=Math.min(PT.startY,ey)-r.top +wrap.scrollTop;
+  const bx=Math.max(PT.startX,ex)-r.left+wrap.scrollLeft;
+  const by=Math.max(PT.startY,ey)-r.top +wrap.scrollTop;
+  const gx0=Math.floor(ax/CS),gy0=Math.floor(ay/CS);
+  const gx1=Math.floor(bx/CS),gy1=Math.floor(by/CS);
+  const sel=G.units.filter(u=>u.owner===1&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
+  if(sel.length>0){
+    SEL.phase='sel'; SEL.selUnits=sel; SEL.selBldg=null;
+    showMultiPanel(sel);
+  } else resetSel();
+  render();
+}
+
+// ════════════════════════════════════
+// TAP LOGIC  ← core "tap cell then see actions"
+// ════════════════════════════════════
+function onTap(x,y){
+  const f=fog1(x,y);
+  const terrain=G.map[y][x];
+  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===1);
+  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===1);
+  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===2):null;
+  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner===2):null;
+
+  // ── BUILD PLACEMENT PHASE ──
+  if(SEL.phase==='build_place'){
+    if(canBuild(x,y)) execBuild(x,y);
+    else glog('❌ 無法在此建造（非空地）');
+    resetSel(); return;
+  }
+
+  // ── HAVE SELECTED UNITS ──
+  if(SEL.selUnits.length>0){
+    const units=SEL.selUnits;
+
+    // Tap enemy → attack
+    if(enUnit||enBldg){
+      const tgt=enUnit||enBldg;
+      units.forEach(u=>{u.act='attack';u.tgt=tgt.id;});
+      glog(`⚔️ ${units.length}個單位攻擊 ${dsp(tgt)}`);
+      resetSel(); return;
+    }
+
+    // Tap gold/tree with workers → harvest
+    if((terrain===T.G||terrain===T.W)){
+      const wks=units.filter(u=>u.type==='worker');
+      if(wks.length>0){
+        wks.forEach(u=>{u.act='harvest';u.tgt=[x,y];});
+        glog(`⛏️ ${wks.length}個Worker採集${terrain===T.G?'💰':'🌲'}`);
+        resetSel(); return;
+      }
+    }
+
+    // Tap walkable cell → move
+    if(canWalk(x,y)){
+      units.forEach(u=>{u.act='move';u.tgt=[x,y];});
+      glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
+      resetSel(); return;
+    }
+
+    // Tap own unit → switch selection to it
+    if(myUnit){ selectUnit(myUnit); return; }
+    if(myBldg){ selectBldg(myBldg); return; }
+
+    // Tap nothing useful → deselect
+    resetSel(); return;
+  }
+
+  // ── NOTHING SELECTED ──
+  if(myUnit){ selectUnit(myUnit); return; }
+  if(myBldg){ selectBldg(myBldg); return; }
+
+  // Info-only taps
+  if(enUnit||enBldg){
+    const e=enUnit||enBldg;
+    setInfo(IC['e_'+e.type]||'👾',`敵方 ${e.type}`,`HP ${e.hp}/${e.mhp}`,'');
+    setActions(`<span class="hint">先選我方士兵，再點此敵人攻擊</span>`); return;
+  }
+  if(terrain===T.G){setInfo('💰','金礦','可採集','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
+  if(terrain===T.W){setInfo('🌲','樹林','可砍伐','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
+  if(terrain===T.M){setInfo('🏔️','山地','不可通行','');setActions('');return;}
+  if(f==='h'){setInfo('❓','未探索','','');setActions('');return;}
+
+  resetSel();
+}
+
+// ════════════════════════════════════
+// SELECT + PANELS
+// ════════════════════════════════════
+function selectUnit(u){
+  SEL.phase='sel'; SEL.selUnits=[u]; SEL.selBldg=null;
+  setInfo(IC[u.type], u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
+  showUnitPanel(u);
+  render();
+}
+
+function selectBldg(b){
+  SEL.phase='sel'; SEL.selUnits=[]; SEL.selBldg=b;
+  setInfo(b.uc?'🏗️':(IC[b.type]||'🏠'), b.type+(b.uc?' (建造中)':''),
+    `HP ${b.hp}/${b.mhp}`, b.tq.length?`隊列:${b.tq.length}`:'');
+  showBldgPanel(b);
+  render();
+}
+
+function showUnitPanel(u){
+  const p=G.res[1]; let html='';
+  if(u.type==='worker'){
+    html+=`<span class="hint">點地圖移動・點💰🌲採集・點敵人攻擊</span>`;
+    html+=mkAbtn('🌾 建農場', '60🪙30🌲', p.gold>=60&&p.wood>=30, `startBuild('farm')`);
+    html+=mkAbtn('⚔️ 建兵營', '120🪙50🌲', p.gold>=120&&p.wood>=50, `startBuild('barracks')`);
+    html+=mkAbtn('🗼 建箭塔', '100🪙80🌲', p.gold>=100&&p.wood>=80, `startBuild('tower')`);
+  } else {
+    html+=`<span class="hint">點地圖移動・點敵人/建築攻擊</span>`;
+  }
+  html+=`<button class="ab" onclick="resetSel()" style="margin-left:auto">取消選擇</button>`;
+  setActions(html);
+}
+
+function showBldgPanel(b){
+  if(b.uc){
+    setActions(`<span class="hint">建造中 ${b.bp}/${b.bt} ticks</span><button class="ab" onclick="resetSel()">關閉</button>`);
+    return;
+  }
+  const p=G.res[1]; let html='';
+  if(b.type==='townhall'){
+    html+=mkAbtn('👷 訓練Worker','50🪙', p.gold>=50, `doTrain('${b.id}','worker')`);
+  }
+  if(b.type==='barracks'){
+    const hf=p.food<p.foodMax;
+    html+=mkAbtn('🗡️ 士兵','80🪙', p.gold>=80&&hf, `doTrain('${b.id}','soldier')`);
+    html+=mkAbtn('🏹 弓手','100🪙', p.gold>=100&&hf, `doTrain('${b.id}','archer')`);
+    if(!hf) html+=`<span class="hint" style="color:var(--r)">⚠️ 食物已滿，請先建農場</span>`;
+    if(b.tq.length) html+=`<span class="hint">訓練隊列: ${b.tq.join(',')} (${b.tp}tick)</span>`;
+  }
+  if(b.type==='farm') html+=`<span class="hint">提供 +5 食物上限</span>`;
+  if(b.type==='tower') html+=`<span class="hint">自動攻擊 ${BD.tower.rng} 格內敵人 (ATK ${BD.tower.atk})</span>`;
+  html+=`<button class="ab" onclick="resetSel()">關閉</button>`;
+  setActions(html);
+}
+
+function showMultiPanel(units){
+  const t=[...new Set(units.map(u=>u.type))].join('+');
+  setInfo('⚔️',`${units.length}個單位 (${t})`,'點地圖移動・點敵人攻擊','');
+  setActions(`<span class="hint">點空地移動・點敵人攻擊</span><button class="ab" onclick="resetSel()">取消</button>`);
+  render();
+}
+
+function startBuild(type){
+  SEL.buildType=type; SEL.phase='build_place';
+  setInfo('🏗️','選擇建造位置','點綠色高亮的空地','');
+  setActions(`<span class="hint">點空地 (綠框) 放置 ${type}</span><button class="ab" onclick="resetSel()">取消</button>`);
+  render();
+}
+
+function execBuild(x,y){
+  const type=SEL.buildType;
+  const d=BD[type]; const p=G.res[1];
+  if(p.gold<d.cost.g||p.wood<d.cost.w){glog('❌ 資源不足');return;}
+  const worker=SEL.selUnits.find(u=>u.type==='worker');
+  if(!worker){glog('❌ 需要Worker');return;}
+  p.gold-=d.cost.g; p.wood-=d.cost.w;
+  addBldg(type,1,x,y,true);
+  worker.act='move'; worker.tgt=[x,y];
+  glog(`🏗️ 建造 ${type} → ${cs(x,y)}`);
+  updateHUD();
+}
+
+function doTrain(bldgId,utype){
+  const b=G.bldgs.find(b=>b.id===bldgId); if(!b) return;
+  const p=G.res[1];
+  const cost=UD[utype].cost.g;
+  if(p.gold<cost){glog('❌ 金幣不足');return;}
+  if(utype!=='worker'&&p.food>=p.foodMax){glog('❌ 食物已滿');return;}
+  p.gold-=cost; b.tq.push(utype);
+  glog(`✅ ${utype} 加入訓練`);
+  updateHUD(); showBldgPanel(b);
+}
+
+function resetSel(){
+  SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null};
+  setInfo('🗺️','點選單位或建築','','');
+  setActions('<span class="hint">點我方👷Worker或⚔️士兵開始<br>拖曳可框選多個單位</span>');
+  render();
+}
+
+// ════════════════════════════════════
+// TICK
+// ════════════════════════════════════
+function tick(){
+  if(G.over) return;
+  G.tick++;
+  el('h-tick').textContent='T'+G.tick;
+
+  const dead=new Set();
+
+  // Unit actions
+  G.units.forEach(u=>{
+    if(u.act==='move'&&u.tgt){
+      const [tx,ty]=u.tgt;
+      if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;}
+      const s=step(u.x,u.y,tx,ty,u.id);
+      if(s){u.x=s[0];u.y=s[1];}
+    }
+    else if(u.act==='harvest'&&u.tgt){
+      const [tx,ty]=u.tgt;
+      const dist=Math.abs(u.x-tx)+Math.abs(u.y-ty);
+      if(dist<=1){
+        const t=G.map[ty]?.[tx];
+        if(t===T.G) G.res[u.owner].gold+=4;
+        else if(t===T.W) G.res[u.owner].wood+=3;
+        // stays in harvest loop — worker keeps mining each tick
+      } else {
+        const s=step(u.x,u.y,tx,ty,u.id);
+        if(s){u.x=s[0];u.y=s[1];}
+        else { u.act=null; u.tgt=null; } // path blocked, give up
+      }
+    }
+    else if(u.act==='attack'&&u.tgt){
+      const tgt=byId(u.tgt);
+      if(!tgt){u.act=null;u.tgt=null;return;}
+      const dist=Math.abs(u.x-tgt.x)+Math.abs(u.y-tgt.y);
+      if(dist<=u.rng){
+        tgt.hp-=u.atk; // hp only decreases, never set back up
+        if(G.tick%3===0) hitFx(tgt.x,tgt.y);
+        if(tgt.hp<=0) dead.add(tgt.id);
+      } else {
+        const s=step(u.x,u.y,tgt.x,tgt.y,u.id);
+        if(s){u.x=s[0];u.y=s[1];}
+      }
+    }
+  });
+
+  // Tower auto-attack
+  G.bldgs.filter(b=>b.type==='tower'&&!b.uc).forEach(tw=>{
+    G.units.filter(u=>u.owner!==tw.owner
+      && Math.abs(u.x-tw.x)+Math.abs(u.y-tw.y)<=BD.tower.rng
+      && G.fog[tw.owner-1][u.y][u.x]==='v')
+    .slice(0,1).forEach(u=>{
+      u.hp-=BD.tower.atk;
+      if(u.hp<=0) dead.add(u.id);
+    });
+  });
+
+  // Resolve deaths — hp is only written down here, no regen anywhere
+  dead.forEach(id=>{
+    const ui=G.units.findIndex(u=>u.id===id);
+    if(ui!==-1){
+      const u=G.units[ui];
+      G.res[u.owner].food-=u.food;
+      glog(`💀 ${dsp(u)} 陣亡`);
+      G.units.splice(ui,1);
+      SEL.selUnits=SEL.selUnits.filter(u=>u.id!==id);
+    }
+    const bi=G.bldgs.findIndex(b=>b.id===id);
+    if(bi!==-1){
+      const b=G.bldgs[bi];
+      if(b.type==='townhall'){G.over=true;G.winner=b.owner===1?2:1;showWin();}
+      // Refund food capacity — only if building was completed
+      if(b.type==='farm'&&!b.uc) G.res[b.owner].foodMax-=BD.farm.food;
+      if(b.type==='townhall'&&!b.uc) G.res[b.owner].foodMax-=BD.townhall.food;
+      glog(`💥 ${dsp(b)} 被摧毀`);
+      G.bldgs.splice(bi,1);
+      if(SEL.selBldg?.id===id) resetSel();
+    }
+  });
+
+  // Building construction
+  G.bldgs.forEach(b=>{
+    if(b.uc&&b.bp<b.bt){
+      b.bp++;
+      if(b.bp>=b.bt){
+        b.uc=false;
+        glog(`✅ ${b.type} 建造完成 (${cs(b.x,b.y)})`);
+        if(BD[b.type].food) G.res[b.owner].foodMax+=BD[b.type].food;
+        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
+      }
+    }
+    // Training queue
+    if(!b.uc&&b.tq.length>0){
+      b.tp++;
+      const need=b.tq[0]==='worker'?12:b.tq[0]==='soldier'?10:14;
+      if(b.tp>=need){
+        const ut=b.tq.shift(); b.tp=0;
+        const pos=nearEmpty(b.x,b.y);
+        if(pos){ addUnit(ut,b.owner,pos[0],pos[1]); glog(`🎖️ ${ut} 訓練完成`); }
+        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
+      }
+    } else if(!b.uc&&b.tq.length===0){
+      b.tp=0; // reset counter when queue is empty
+    }
+  });
+
+  // (AI disabled in solo test mode)
+  updateFog(); updateHUD(); render();
+}
+
+// ════════════════════════════════════
+// AI
+// ════════════════════════════════════
+function aiAct(){
+  const p=G.res[2];
+  const myU=G.units.filter(u=>u.owner===2);
+  const myB=G.bldgs.filter(b=>b.owner===2);
+  const workers=myU.filter(u=>u.type==='worker');
+  const fighters=myU.filter(u=>u.type==='soldier'||u.type==='archer');
+  const th=myB.find(b=>b.type==='townhall');
+  const barr=myB.find(b=>b.type==='barracks'&&!b.uc);
+
+  // Workers: keep harvesting
+  workers.forEach(w=>{
+    if(!w.act||w.act==='move'){
+      const gm=nearTile(w.x,w.y,T.G); if(gm){w.act='harvest';w.tgt=gm;}
+    }
+  });
+
+  // Build farm if food capped
+  if(p.food>=p.foodMax-1&&p.gold>=60&&p.wood>=30&&!myB.find(b=>b.type==='farm'&&b.uc)){
+    const pos=nearEmpty(th?.x||22,th?.y||10,4);
+    if(pos){addBldg('farm',2,pos[0],pos[1],true);p.gold-=60;p.wood-=30;}
+  }
+  // Build barracks
+  if(!myB.find(b=>b.type==='barracks')&&p.gold>=120&&p.wood>=50){
+    const pos=nearEmpty(th?.x||22,th?.y||10,5);
+    if(pos){addBldg('barracks',2,pos[0],pos[1],true);p.gold-=120;p.wood-=50;}
+  }
+  // Train soldiers
+  if(barr&&p.gold>=80&&p.food<p.foodMax){barr.tq.push('soldier');p.gold-=80;}
+  // Train worker if low
+  if(workers.length<2&&th&&p.gold>=50&&!th.tq.length){th.tq.push('worker');p.gold-=50;}
+
+  // Attack
+  const p1th=G.bldgs.find(b=>b.owner===1&&b.type==='townhall');
+  fighters.forEach(s=>{
+    if(s.act==='attack'&&byId(s.tgt)) return; // already attacking something alive
+    const near=G.units.find(u=>u.owner===1&&Math.abs(u.x-s.x)+Math.abs(u.y-s.y)<=8);
+    if(near){s.act='attack';s.tgt=near.id;}
+    else if(p1th){s.act='move';s.tgt=[p1th.x,p1th.y];}
+  });
+}
+
+// ════════════════════════════════════
+// UTILS
+// ════════════════════════════════════
+function el(id){return document.getElementById(id);}
+function inB(x,y){return x>=0&&x<MW&&y>=0&&y<MH;}
+function cs(x,y){return String.fromCharCode(65+x)+(y+1);}
+function dsp(e){return (e.owner===2?'敵':'')+e.id.replace(/p\d$/,'');}
+function byId(id){return G.units.find(u=>u.id===id)||G.bldgs.find(b=>b.id===id);}
+function stateStr(u){
+  if(!u.act) return '待機';
+  if(u.act==='move') return `移動→${u.tgt?cs(u.tgt[0],u.tgt[1]):''}`;
+  if(u.act==='harvest') return '採集中';
+  if(u.act==='attack') return '攻擊中';
+  return u.act;
+}
+
+function canWalk(x,y){
+  if(!inB(x,y)) return false;
+  if(G.map[y][x]===T.M) return false;
+  if(G.bldgs.find(b=>b.x===x&&b.y===y)) return false;
+  return true;
+}
+function canBuild(x,y){
+  if(!inB(x,y)||G.map[y][x]!==T.E) return false;
+  return !G.bldgs.find(b=>b.x===x&&b.y===y);
+}
+
+// Pathfinding step: avoids other units (except own target)
+function step(fx,fy,tx,ty,selfId){
+  const dx=tx-fx,dy=ty-fy;
+  if(!dx&&!dy) return null;
+  const primary=Math.abs(dx)>=Math.abs(dy)?
+    [[fx+(dx>0?1:-1),fy],[fx,fy+(dy>0?1:-1)]]:
+    [[fx,fy+(dy>0?1:-1)],[fx+(dx>0?1:-1),fy]];
+  const all=[...primary,[fx+(dx>0?1:-1),fy+(dy>0?1:-1)],[fx-(dx>0?1:-1),fy+(dy>0?1:-1)]];
+  for(const [nx,ny] of all){
+    if(!canWalk(nx,ny)) continue;
+    // Allow moving through own units if no other option (soft collision)
+    const blocker=G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny);
+    if(!blocker) return [nx,ny];
+  }
+  return null; // blocked
+}
+
+function nearEmpty(cx,cy,r=4){
+  for(let rd=1;rd<=r;rd++) for(let dy=-rd;dy<=rd;dy++) for(let dx=-rd;dx<=rd;dx++){
+    const x=cx+dx,y=cy+dy; if(canBuild(x,y)) return [x,y];
+  } return null;
+}
+function nearTile(cx,cy,type){
+  let best=null,bd=999;
+  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++) if(G.map[y][x]===type){
+    const d=Math.abs(x-cx)+Math.abs(y-cy); if(d<bd){bd=d;best=[x,y];}
+  } return best;
+}
+
+function hitFx(x,y){
+  const d=CE[`${x},${y}`]; if(!d) return;
+  d.classList.add('hit-fx');
+  setTimeout(()=>d.classList.remove('hit-fx'),360);
+}
+
+// ════════════════════════════════════
+// UI
+// ════════════════════════════════════
+function setInfo(icon,name,hp,state){
+  el('i-icon').textContent=icon;
+  el('i-name').textContent=name;
+  el('i-hp').textContent=hp;
+  el('i-state').textContent=state;
+}
+function setActions(html){el('action-bar').innerHTML=html;}
+function glog(msg){el('logbar').textContent=msg;}
+function updateHUD(){
+  const p=G.res[1];
+  el('h-gold').textContent=p.gold;
+  el('h-wood').textContent=p.wood;
+  el('h-food').textContent=p.food;
+  el('h-fmax').textContent=p.foodMax;
+}
+
+function mkAbtn(label,cost,ok,cb){
+  return `<button class="ab${ok?'':' off'}" ${ok?`onclick="${cb}"`:''}>${label}<span class="co">${cost}</span></button>`;
+}
+
+function cycleSpeed(){
+  speedLv=speedLv===1?2:speedLv===2?4:1;
+  el('speed-btn').textContent=speedLv+'x';
+  clearInterval(tickTmr);
+  tickTmr=setInterval(()=>{tick();if(G.over)clearInterval(tickTmr);},Math.round(TICK_MS/speedLv));
+}
+
+function showWin(){
+  clearInterval(tickTmr);
+  el('win-txt').textContent=G.winner===1?'🏆 勝利！':'💀 敗北...';
+  el('win-sub').textContent=`Tick ${G.tick} — ${G.winner===1?'摧毀敵方主城':'主城被摧毀'}`;
+  el('win-ovl').classList.add('show');
+}
+
+function goMenu(){
+  clearInterval(tickTmr);
+  if(peer){peer.destroy();peer=null;} conn=null;
+  el('game').style.display='none';
+  el('win-ovl').classList.remove('show');
+  el('menu').style.display='flex';
+  resetSel();
+}
+</script>
+</body>
+</html>
