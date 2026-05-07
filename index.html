@@ -518,39 +518,53 @@ function onTap(x,y){
   if(SEL.phase==='build_place'){
     if(canBuild(x,y)) execBuild(x,y);
     else glog('❌ 無法在此建造（非空地）');
-    resetSel(); return;
+    // keep worker selected after build placement
+    const w=SEL.selUnits.find(u=>u.type==='worker');
+    if(w){ SEL.phase='sel'; SEL.buildType=null; showUnitPanel(w); render(); }
+    else resetSel();
+    return;
   }
 
   // ── HAVE SELECTED UNITS ──
   if(SEL.selUnits.length>0){
     const units=SEL.selUnits;
 
-    // Tap enemy → attack
+    // Tap enemy → attack (keep selection)
     if(enUnit||enBldg){
       const tgt=enUnit||enBldg;
       units.forEach(u=>{u.act='attack';u.tgt=tgt.id;});
       glog(`⚔️ ${units.length}個單位攻擊 ${dsp(tgt)}`);
-      resetSel(); return;
+      refreshSelPanel(); return;
     }
 
-    // Tap gold/tree with workers → harvest
-    if((terrain===T.G||terrain===T.W)){
+    // Tap own damaged building with workers → offer repair
+    if(myBldg&&myBldg.hp<myBldg.mhp){
+      const wks=units.filter(u=>u.type==='worker');
+      if(wks.length>0){
+        wks.forEach(u=>{u.act='repair';u.tgt=myBldg.id;});
+        glog(`🔧 ${wks.length}個Worker → 修復 ${myBldg.type}`);
+        refreshSelPanel(); return;
+      }
+    }
+
+    // Tap gold/tree with workers → harvest (keep selection)
+    if(terrain===T.G||terrain===T.W){
       const wks=units.filter(u=>u.type==='worker');
       if(wks.length>0){
         wks.forEach(u=>{u.act='harvest';u.tgt=[x,y];});
         glog(`⛏️ ${wks.length}個Worker採集${terrain===T.G?'💰':'🌲'}`);
-        resetSel(); return;
+        refreshSelPanel(); return;
       }
     }
 
-    // Tap walkable cell → move (spread units around target so they don't pile up)
+    // Tap walkable cell → move (keep selection)
     if(canWalk(x,y)){
       assignSpreadMove(units, x, y);
       glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
-      resetSel(); return;
+      refreshSelPanel(); return;
     }
 
-    // Tap own unit → switch selection to it
+    // Tap own unit → switch selection
     if(myUnit){ selectUnit(myUnit); return; }
     if(myBldg){ selectBldg(myBldg); return; }
 
@@ -576,6 +590,14 @@ function onTap(x,y){
   resetSel();
 }
 
+// Refresh bottom panel without clearing selection
+function refreshSelPanel(){
+  if(SEL.selUnits.length===1) selectUnit(SEL.selUnits[0]);
+  else if(SEL.selUnits.length>1) showMultiPanel(SEL.selUnits);
+  else if(SEL.selBldg) selectBldg(SEL.selBldg);
+  render();
+}
+
 // ════════════════════════════════════
 // SELECT + PANELS
 // ════════════════════════════════════
@@ -597,15 +619,16 @@ function selectBldg(b){
 function showUnitPanel(u){
   const p=G.res[1]; let html='';
   if(u.type==='worker'){
-    html+=`<span class="hint">點地圖移動・點💰🌲採集・點敵人攻擊</span>`;
+    html+=`<span class="hint">點地圖移動・點💰🌲採集・點受損建築修復・點敵人攻擊</span>`;
     html+=mkAbtn('🌾 建農場', '60🪙30🌲', p.gold>=60&&p.wood>=30, `startBuild('farm')`);
     html+=mkAbtn('⚔️ 建兵營', '120🪙50🌲', p.gold>=120&&p.wood>=50, `startBuild('barracks')`);
     html+=mkAbtn('🗼 建箭塔', '100🪙80🌲', p.gold>=100&&p.wood>=80, `startBuild('tower')`);
   } else {
     html+=`<span class="hint">點地圖移動・點敵人/建築攻擊</span>`;
   }
-  html+=`<button class="ab" onclick="resetSel()" style="margin-left:auto">取消選擇</button>`;
+  html+=`<button class="ab" onclick="resetSel()">取消選擇</button>`;
   setActions(html);
+  setInfo(IC[u.type], u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
 }
 
 function showBldgPanel(b){
@@ -705,6 +728,23 @@ function tick(){
         const s=step(u.x,u.y,tx,ty,u.id);
         if(s){u.x=s[0];u.y=s[1];}
         else { u.act=null; u.tgt=null; }
+      }
+    }
+    else if(u.act==='repair'&&u.tgt){
+      const bldg=G.bldgs.find(b=>b.id===u.tgt);
+      if(!bldg||bldg.hp>=bldg.mhp){u.act=null;u.tgt=null;return;} // done or destroyed
+      const dist=Math.abs(u.x-bldg.x)+Math.abs(u.y-bldg.y);
+      if(dist<=1){
+        // repair costs 1 gold/tick per worker
+        if(G.res[u.owner].gold>0){
+          G.res[u.owner].gold-=1;
+          bldg.hp=Math.min(bldg.mhp, bldg.hp+3);
+          if(bldg.hp>=bldg.mhp){ glog(`✅ ${bldg.type} 修復完成`); u.act=null; u.tgt=null; }
+        }
+      } else {
+        const s=step(u.x,u.y,bldg.x,bldg.y,u.id);
+        if(s){u.x=s[0];u.y=s[1];}
+        else {u.act=null;u.tgt=null;}
       }
     }
     else if(u.act==='attack'&&u.tgt){
@@ -859,6 +899,7 @@ function stateStr(u){
   if(u.act==='move') return `移動→${u.tgt?cs(u.tgt[0],u.tgt[1]):''}`;
   if(u.act==='harvest') return '採集中';
   if(u.act==='attack') return '攻擊中';
+  if(u.act==='repair') return '修復中';
   return u.act;
 }
 
@@ -926,7 +967,8 @@ function assignSpreadMove(units, cx, cy){
 
 function nearEmpty(cx,cy,r=4){
   for(let rd=1;rd<=r;rd++) for(let dy=-rd;dy<=rd;dy++) for(let dx=-rd;dx<=rd;dx++){
-    const x=cx+dx,y=cy+dy; if(canBuild(x,y)) return [x,y];
+    const x=cx+dx,y=cy+dy;
+    if(canBuild(x,y)&&!G.units.find(u=>u.x===x&&u.y===y)) return [x,y];
   } return null;
 }
 function nearTile(cx,cy,type){
