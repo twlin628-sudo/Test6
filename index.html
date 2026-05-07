@@ -185,7 +185,6 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
   <button class="pbtn" onclick="goMenu()" style="max-width:200px;margin-top:8px">返回主選單</button>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 'use strict';
 // ════════════════════════════════════
@@ -230,123 +229,19 @@ let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,draggin
 // ════════════════════════════════════
 // PEER
 // ════════════════════════════════════
-let peer=null, conn=null, peerRole=null; // role: 'host'|'guest'
+let peer=null, conn=null, peerRole=null;
 
 function openPeer(role){
-  peerRole=role;
-  if(peer){try{peer.destroy();}catch(e){} peer=null; conn=null;}
-  document.getElementById('peer-ovl').classList.add('show');
-  document.getElementById('peer-title').textContent= role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
-  document.getElementById('peer-room-code').style.display='none';
-  document.getElementById('peer-input').style.display= role==='guest'?'block':'none';
-  document.getElementById('peer-connect-btn').style.display='none';
-  document.getElementById('peer-msg').textContent='連線 PeerJS 伺服器中...';
-
-  const timeout=setTimeout(()=>{
-    document.getElementById('peer-msg').textContent='❌ 無法連線 PeerJS。請確認網路，或用單人模式測試。';
-  }, 8000);
-
-  peer=new Peer();
-  peer.on('open', myId=>{
-    clearTimeout(timeout);
-    if(role==='host'){
-      document.getElementById('peer-room-code').textContent=myId;
-      document.getElementById('peer-room-code').style.display='block';
-      document.getElementById('peer-msg').textContent='↑ 將此ID傳給對方貼上，等待連線...';
-      peer.on('connection', c=>setupConn(c,'host'));
-    } else {
-      document.getElementById('peer-msg').textContent='將 Host 的ID貼入後按連線';
-      document.getElementById('peer-connect-btn').style.display='block';
-    }
-  });
-  peer.on('error', e=>{
-    clearTimeout(timeout);
-    document.getElementById('peer-msg').textContent='❌ 錯誤: '+e.type;
-  });
+  alert('多人模式需上傳至 GitHub Pages 後才能使用\n（Claude.ai 環境限制外部連線）\n\n請先用「單人測試」確認功能');
 }
+function closePeer(){ document.getElementById('peer-ovl').classList.remove('show'); }
+function guestConnect(){}
+function setupConn(){}
+function sendState(){}
+function onPeerMsg(){}
 
-function guestConnect(){
-  const code=document.getElementById('peer-input').value.trim();
-  if(code.length<6){alert('請貼上完整的Host ID');return;}
-  document.getElementById('peer-msg').textContent='連線中...';
-  document.getElementById('peer-connect-btn').style.display='none';
-  const c=peer.connect(code);
-  setupConn(c,'guest');
-}
-
-function setupConn(c, role){
-  conn=c;
-  c.on('open',()=>{
-    document.getElementById('peer-msg').textContent='✅ 連線成功！';
-    setTimeout(()=>{
-      closePeer();
-      // Host is P1, guest is P2
-      gameMode= role==='host'?'host':'guest';
-      if(role==='host'){
-        startMulti();
-      } else {
-        // Guest waits for host to send initial state
-        startMultiGuest();
-      }
-    },700);
-  });
-  c.on('data', onPeerMsg);
-  c.on('close',()=>glog('⚠️ 對方斷線'));
-  c.on('error',e=>glog('❌ 連線錯誤: '+e));
-}
-
-function closePeer(){document.getElementById('peer-ovl').classList.remove('show');}
-
-// Host sends compact command, guest executes + sends ack
-// Protocol: {t:'init',state} | {t:'cmd',cmd} | {t:'tick',g} 
-function sendCmd(cmd){ if(conn&&conn.open) conn.send({t:'cmd',cmd}); }
-function sendState(){ if(conn&&conn.open) conn.send({t:'tick',g:serializeG()}); }
-
-function onPeerMsg(msg){
-  if(msg.t==='init'||msg.t==='tick'){
-    deserializeG(msg.g);
-    updateFog(); updateHUD(); render();
-  }
-  if(msg.t==='cmd'){
-    execCmd(msg.cmd, 2); // execute as P2 on host
-    // host re-sends state
-    if(gameMode==='host') sendState();
-  }
-}
-
-function serializeG(){
-  return {
-    tick:G.tick, players:G.players,
-    buildings:G.buildings.map(b=>({...b})),
-    units:G.units.map(u=>({...u})),
-  };
-}
-function deserializeG(s){
-  G.tick=s.tick; G.players=s.players;
-  G.buildings=s.buildings; G.units=s.units;
-}
-
-function startMulti(){
-  initGame(1); // host = P1
-  glog('Host 開始，等待 Guest 操作');
-  tickTmr=setInterval(multiTick, TICK_MS);
-}
-function startMultiGuest(){
-  // Build empty game, wait for state
-  document.getElementById('menu').style.display='none';
-  document.getElementById('game').style.display='flex';
-  glog('Guest 連線成功，等待遊戲同步...');
-}
-
-function multiTick(){
-  tick(1);   // simulate P1+P2 (AI off)
-  sendState(); // broadcast to guest
-}
-
-function execCmd(cmd, forPlayer){
-  // Remote command execution (future: full cmd serialization)
-  // Basic implementation placeholder
-}
+function startMulti(){ startSolo(); }
+function startMultiGuest(){ startSolo(); }
 
 // ════════════════════════════════════
 // INIT
@@ -647,9 +542,9 @@ function onTap(x,y){
       }
     }
 
-    // Tap walkable cell → move
+    // Tap walkable cell → move (spread units around target so they don't pile up)
     if(canWalk(x,y)){
-      units.forEach(u=>{u.act='move';u.tgt=[x,y];});
+      assignSpreadMove(units, x, y);
       glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
       resetSel(); return;
     }
@@ -793,9 +688,13 @@ function tick(){
   G.units.forEach(u=>{
     if(u.act==='move'&&u.tgt){
       const [tx,ty]=u.tgt;
-      if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;}
+      if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;} // arrived
       const s=step(u.x,u.y,tx,ty,u.id);
-      if(s){u.x=s[0];u.y=s[1];}
+      if(s){ u.x=s[0]; u.y=s[1]; }
+      else {
+        // Completely blocked — stop to prevent oscillation
+        u.act=null; u.tgt=null;
+      }
     }
     else if(u.act==='harvest'&&u.tgt){
       const [tx,ty]=u.tgt;
@@ -961,22 +860,56 @@ function canBuild(x,y){
   return !G.bldgs.find(b=>b.x===x&&b.y===y);
 }
 
-// Pathfinding step: avoids other units (except own target)
+// Pathfinding step: move one cell toward (tx,ty)
+// Pass 1: avoid all other units. Pass 2: allow stepping on friendlies.
 function step(fx,fy,tx,ty,selfId){
-  const dx=tx-fx,dy=ty-fy;
+  const dx=tx-fx, dy=ty-fy;
   if(!dx&&!dy) return null;
-  const primary=Math.abs(dx)>=Math.abs(dy)?
-    [[fx+(dx>0?1:-1),fy],[fx,fy+(dy>0?1:-1)]]:
-    [[fx,fy+(dy>0?1:-1)],[fx+(dx>0?1:-1),fy]];
-  const all=[...primary,[fx+(dx>0?1:-1),fy+(dy>0?1:-1)],[fx-(dx>0?1:-1),fy+(dy>0?1:-1)]];
-  for(const [nx,ny] of all){
+  const sx=dx>0?1:dx<0?-1:0;
+  const sy=dy>0?1:dy<0?-1:0;
+  // Candidates ordered by preference
+  const cands=Math.abs(dx)>=Math.abs(dy)
+    ? [[fx+sx,fy],[fx,fy+sy],[fx+sx,fy+sy]]
+    : [[fx,fy+sy],[fx+sx,fy],[fx+sx,fy+sy]];
+  const self=G.units.find(u=>u.id===selfId);
+  // Pass 1: no unit collision
+  for(const [nx,ny] of cands){
     if(!canWalk(nx,ny)) continue;
-    // Allow moving through own units if no other option (soft collision)
-    const blocker=G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny);
-    if(!blocker) return [nx,ny];
+    if(!G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny)) return [nx,ny];
   }
-  return null; // blocked
+  // Pass 2: allow friendly overlap as last resort (avoids deadlock)
+  for(const [nx,ny] of cands){
+    if(!canWalk(nx,ny)) continue;
+    const bl=G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny);
+    if(bl&&self&&bl.owner===self.owner) return [nx,ny];
+  }
+  return null;
 }
+
+// Assign distinct destinations around (cx,cy) for multiple units
+// Units closest to target get the best spots
+function assignSpreadMove(units, cx, cy){
+  // Generate candidate cells around target in rings, sorted by distance from target
+  const cands=[];
+  for(let r=0;r<=4;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue; // only ring edge
+    const nx=cx+dx, ny=cy+dy;
+    if(canWalk(nx,ny)) cands.push([nx,ny,Math.abs(dx)+Math.abs(dy)]);
+  }
+  cands.sort((a,b)=>a[2]-b[2]);
+
+  // Sort units by current distance to target (closest first gets best spot)
+  const sorted=[...units].sort((a,b)=>
+    (Math.abs(a.x-cx)+Math.abs(a.y-cy))-(Math.abs(b.x-cx)+Math.abs(b.y-cy)));
+
+  const used=new Set();
+  sorted.forEach(u=>{
+    const spot=cands.find(([nx,ny])=>!used.has(`${nx},${ny}`));
+    if(spot){ used.add(`${spot[0]},${spot[1]}`); u.act='move'; u.tgt=[spot[0],spot[1]]; }
+    else { u.act='move'; u.tgt=[cx,cy]; } // fallback
+  });
+}
+
 
 function nearEmpty(cx,cy,r=4){
   for(let rd=1;rd<=r;rd++) for(let dy=-rd;dy<=rd;dy++) for(let dx=-rd;dx<=rd;dx++){
@@ -1035,7 +968,6 @@ function showWin(){
 
 function goMenu(){
   clearInterval(tickTmr);
-  if(peer){peer.destroy();peer=null;} conn=null;
   el('game').style.display='none';
   el('win-ovl').classList.remove('show');
   el('menu').style.display='flex';
