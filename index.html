@@ -333,6 +333,7 @@ function updateFog(){
 }
 
 function fog1(x,y){return G.fog[0][y]?.[x];} // fog state for P1
+function canSee(owner,x,y){return G.fog[owner-1]?.[y]?.[x]==='v';}
 
 // ════════════════════════════════════
 // BUILD DOM
@@ -691,10 +692,7 @@ function tick(){
       if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;} // arrived
       const s=step(u.x,u.y,tx,ty,u.id);
       if(s){ u.x=s[0]; u.y=s[1]; }
-      else {
-        // Completely blocked — stop to prevent oscillation
-        u.act=null; u.tgt=null;
-      }
+      else { u.act=null; u.tgt=null; }
     }
     else if(u.act==='harvest'&&u.tgt){
       const [tx,ty]=u.tgt;
@@ -703,25 +701,40 @@ function tick(){
         const t=G.map[ty]?.[tx];
         if(t===T.G) G.res[u.owner].gold+=4;
         else if(t===T.W) G.res[u.owner].wood+=3;
-        // stays in harvest loop — worker keeps mining each tick
       } else {
         const s=step(u.x,u.y,tx,ty,u.id);
         if(s){u.x=s[0];u.y=s[1];}
-        else { u.act=null; u.tgt=null; } // path blocked, give up
+        else { u.act=null; u.tgt=null; }
       }
     }
     else if(u.act==='attack'&&u.tgt){
       const tgt=byId(u.tgt);
-      if(!tgt){u.act=null;u.tgt=null;return;}
+      if(!tgt){u.act=null;u.tgt=null;return;} // target dead, go idle → auto-attack will pick next
       const dist=Math.abs(u.x-tgt.x)+Math.abs(u.y-tgt.y);
       if(dist<=u.rng){
-        tgt.hp-=u.atk; // hp only decreases, never set back up
+        tgt.hp-=u.atk;
         if(G.tick%3===0) hitFx(tgt.x,tgt.y);
         if(tgt.hp<=0) dead.add(tgt.id);
       } else {
         const s=step(u.x,u.y,tgt.x,tgt.y,u.id);
         if(s){u.x=s[0];u.y=s[1];}
       }
+    }
+    else if(!u.act && (u.type==='soldier'||u.type==='archer')){
+      // ── AUTO-ATTACK: scan vision for nearest enemy ──
+      const enemy = 3 - u.owner; // opponent player number
+      let nearest=null, nearestDist=999;
+      // Check all visible enemies (units + buildings) within vision
+      const targets=[
+        ...G.units.filter(e=>e.owner===enemy),
+        ...G.bldgs.filter(e=>e.owner===enemy),
+      ];
+      targets.forEach(e=>{
+        if(!canSee(u.owner, e.x, e.y)) return;
+        const d=Math.abs(u.x-e.x)+Math.abs(u.y-e.y);
+        if(d<nearestDist){ nearestDist=d; nearest=e; }
+      });
+      if(nearest){ u.act='attack'; u.tgt=nearest.id; }
     }
   });
 
