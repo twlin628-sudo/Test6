@@ -231,165 +231,223 @@ let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
 let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false};
 
 // ════════════════════════════════════
-// PEER — PeerJS two-player sync
-// Host = P1 runs tick(), sends state to Guest each tick
-// Guest = P2 receives state, renders P2 view, sends commands back
+// FIREBASE SIGNALING + WebRTC DataChannel
+// Firebase 只做信令交換，遊戲資料走純 P2P DataChannel
 // ════════════════════════════════════
-let peer=null, conn=null, peerRole=null;
-let P2cmdQueue=[]; // Host stores incoming P2 commands, executes next tick
+const FB_CONFIG={
+  apiKey:"AIzaSyCCshqyIyhQ86R3wZ8zH2kd-hL8vKiEtSU",
+  databaseURL:"https://test6-1d148-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:"test6-1d148",
+};
+const ICE_SERVERS=[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+];
 
-// ── Open peer panel ──
-function openPeer(role){
-  peerRole=role;
-  if(peer){try{peer.destroy();}catch(e){} peer=null; conn=null;}
+let fbApp=null, fbDb=null;
+let rtcConn=null, dataChannel=null;
+let peerRole=null, roomId=null, roomRef=null;
+let P2cmdQueue=[];
 
-  const ovl=el('peer-ovl');
-  ovl.classList.add('show');
-  el('peer-title').textContent = role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
-  el('peer-room-code').style.display='none';
-  el('peer-input').style.display   = role==='guest'?'block':'none';
-  el('peer-connect-btn').style.display='none';
-  el('peer-msg').textContent='載入 PeerJS...';
-
-  // Dynamically load PeerJS only when needed (avoids blocking main script)
-  if(typeof Peer==='undefined'){
+function loadFirebase(cb){
+  if(window.firebase){cb();return;}
+  el('peer-msg').textContent='載入 Firebase...';
+  const urls=[
+    'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js',
+  ];
+  let n=0;
+  urls.forEach(src=>{
     const s=document.createElement('script');
-    s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-    s.onload=()=>initPeer(role);
-    s.onerror=()=>{ el('peer-msg').textContent='❌ PeerJS 載入失敗，請確認網路後重試'; };
+    s.src=src;
+    s.onload=()=>{if(++n===urls.length)cb();};
+    s.onerror=()=>{el('peer-msg').textContent='❌ Firebase 載入失敗，請確認網路';};
     document.head.appendChild(s);
-  } else {
-    initPeer(role);
-  }
+  });
 }
 
-function initPeer(role){
-  el('peer-msg').textContent='連線伺服器中...';
-  const timeout=setTimeout(()=>{
-    el('peer-msg').textContent='❌ 連線逾時。請確認網路，或用單人模式。';
-  },10000);
+function initFirebase(){
+  if(fbApp)return;
+  fbApp=firebase.initializeApp(FB_CONFIG);
+  fbDb=firebase.database();
+}
 
-  peer=new Peer();
-  peer.on('open', myId=>{
-    clearTimeout(timeout);
-    if(role==='host'){
-      el('peer-room-code').textContent=myId;
-      el('peer-room-code').style.display='block';
-      el('peer-msg').textContent='↑ 將此 ID 傳給對方，等待連線...';
-      peer.on('connection', c=>setupConn(c));
-    } else {
-      el('peer-msg').textContent='將 Host 的 ID 貼入後按連線';
-      el('peer-connect-btn').style.display='block';
-    }
+function makeRoomCode(){
+  return Math.random().toString(36).slice(2,8).toUpperCase();
+}
+
+function openPeer(role){
+  peerRole=role;
+  cleanupRTC();
+  el('peer-ovl').classList.add('show');
+  el('peer-title').textContent=role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
+  el('peer-room-code').style.display='none';
+  el('peer-input').style.display=role==='guest'?'block':'none';
+  el('peer-connect-btn').style.display='none';
+  el('peer-msg').textContent='初始化...';
+  loadFirebase(()=>{
+    initFirebase();
+    if(role==='host') hostCreate();
+    else {el('peer-msg').textContent='輸入房間碼後按連線';el('peer-connect-btn').style.display='block';}
   });
-  peer.on('error', e=>{
-    el('peer-msg').textContent='❌ 錯誤: '+e.type;
+}
+
+function closePeer(){el('peer-ovl').classList.remove('show');}
+
+async function hostCreate(){
+  roomId=makeRoomCode();
+  roomRef=fbDb.ref('rooms/'+roomId);
+  await roomRef.remove();
+  el('peer-room-code').textContent=roomId;
+  el('peer-room-code').style.display='block';
+  el('peer-msg').textContent='等待對方輸入房間碼...';
+
+  rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
+  dataChannel=rtcConn.createDataChannel('game',{ordered:true});
+  setupDataChannel(dataChannel);
+
+  const iceCands=[];
+  rtcConn.onicecandidate=e=>{if(e.candidate)iceCands.push(e.candidate.toJSON());};
+  rtcConn.onicegatheringstatechange=async()=>{
+    if(rtcConn.iceGatheringState==='complete'){
+      await roomRef.child('offer').set({
+        sdp:rtcConn.localDescription.sdp,
+        type:rtcConn.localDescription.type,
+        ice:JSON.stringify(iceCands),
+      });
+    }
+  };
+  const offer=await rtcConn.createOffer();
+  await rtcConn.setLocalDescription(offer);
+
+  roomRef.child('answer').on('value',async snap=>{
+    if(!snap.val()||rtcConn.remoteDescription)return;
+    const a=snap.val();
+    await rtcConn.setRemoteDescription({type:a.type,sdp:a.sdp});
+    for(const c of JSON.parse(a.ice||'[]'))
+      await rtcConn.addIceCandidate(new RTCIceCandidate(c));
+    el('peer-msg').textContent='🔗 建立連線中...';
   });
 }
 
 function guestConnect(){
-  const code=el('peer-input').value.trim();
-  if(!code){ alert('請貼上 Host 的 ID'); return; }
-  el('peer-msg').textContent='連線中...';
+  const code=el('peer-input').value.trim().toUpperCase();
+  if(code.length<4){alert('請輸入房間碼');return;}
+  roomId=code; roomRef=fbDb.ref('rooms/'+roomId);
+  el('peer-msg').textContent='讀取房間...';
   el('peer-connect-btn').style.display='none';
-  const c=peer.connect(code,{reliable:true});
-  setupConn(c);
+  roomRef.child('offer').once('value',async snap=>{
+    if(!snap.val()){
+      el('peer-msg').textContent='❌ 找不到房間，請確認房間碼';
+      el('peer-connect-btn').style.display='block'; return;
+    }
+    const o=snap.val();
+    rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
+    rtcConn.ondatachannel=e=>{dataChannel=e.channel;setupDataChannel(dataChannel);};
+    const iceCands=[];
+    rtcConn.onicecandidate=e=>{if(e.candidate)iceCands.push(e.candidate.toJSON());};
+    rtcConn.onicegatheringstatechange=async()=>{
+      if(rtcConn.iceGatheringState==='complete'){
+        await roomRef.child('answer').set({
+          sdp:rtcConn.localDescription.sdp,
+          type:rtcConn.localDescription.type,
+          ice:JSON.stringify(iceCands),
+        });
+        el('peer-msg').textContent='🔗 建立連線中...';
+      }
+    };
+    await rtcConn.setRemoteDescription({type:o.type,sdp:o.sdp});
+    for(const c of JSON.parse(o.ice||'[]'))
+      await rtcConn.addIceCandidate(new RTCIceCandidate(c));
+    const answer=await rtcConn.createAnswer();
+    await rtcConn.setLocalDescription(answer);
+  });
 }
 
-function setupConn(c){
-  conn=c;
-  c.on('open',()=>{
+function setupDataChannel(ch){
+  ch.onopen=()=>{
     el('peer-msg').textContent='✅ 連線成功！';
+    if(roomRef)roomRef.remove();
     setTimeout(()=>{
       closePeer();
       if(peerRole==='host') startHost();
       else                  startGuest();
     },600);
-  });
-  c.on('data', onPeerMsg);
-  c.on('close',()=>glog('⚠️ 對方斷線'));
-  c.on('error', e=>glog('❌ 連線錯誤: '+e.type));
+  };
+  ch.onmessage=e=>onPeerMsg(JSON.parse(e.data));
+  ch.onclose=()=>glog('⚠️ 對方斷線');
+  ch.onerror=()=>glog('❌ DataChannel 錯誤');
 }
 
-function closePeer(){ el('peer-ovl').classList.remove('show'); }
+function sendRaw(obj){
+  if(dataChannel&&dataChannel.readyState==='open')
+    dataChannel.send(JSON.stringify(obj));
+}
 
-// ── Host: start game, run tick loop, send state each tick ──
+function cleanupRTC(){
+  if(dataChannel){try{dataChannel.close();}catch(e){} dataChannel=null;}
+  if(rtcConn){try{rtcConn.close();}catch(e){} rtcConn=null;}
+  if(roomRef){try{roomRef.remove();}catch(e){} roomRef=null;}
+  P2cmdQueue=[];
+}
+
 function startHost(){
   gameMode='host';
-  initGame(1); // Host is P1
+  initGame(1);
   P2cmdQueue=[];
   clearInterval(tickTmr);
   tickTmr=setInterval(()=>{
-    if(G.over){ clearInterval(tickTmr); return; }
-    // Apply queued P2 commands before tick
+    if(G.over){clearInterval(tickTmr);return;}
     P2cmdQueue.splice(0).forEach(cmd=>applyCmd(cmd,2));
     tick();
-    // Send state to Guest (filter out P1 fog so Guest can't cheat)
     sendToGuest();
-  }, TICK_MS);
-  glog('Host 已連線，遊戲開始');
+  },TICK_MS);
+  glog('✅ Host 已連線，遊戲開始！');
 }
 
-// ── Guest: wait for Host to send initial state ──
 function startGuest(){
   gameMode='guest';
-  // Show game screen, wait for first state packet
   el('menu').style.display='none';
   el('game').style.display='flex';
-  // Disable speed button (Guest doesn't control tick speed)
   el('speed-btn').style.display='none';
-  glog('Guest 已連線，等待遊戲資料...');
+  glog('✅ Guest 已連線，等待遊戲資料...');
 }
 
-// ── Serialize state for Guest (strip P1 fog) ──
 function sendToGuest(){
-  if(!conn||!conn.open) return;
-  const payload={
+  sendRaw({
     t:'state',
-    tick:G.tick,
-    over:G.over, winner:G.winner,
-    res:G.res,
-    map:G.map,
-    fog:G.fog[1], // only P2 fog
+    tick:G.tick,over:G.over,winner:G.winner,
+    res:G.res,map:G.map,fog:G.fog[1],
     bldgs:G.bldgs.map(b=>({...b})),
     units:G.units.map(u=>({...u})),
-    uc:G.uc, bc:G.bc,
-  };
-  conn.send(payload);
+    uc:G.uc,bc:G.bc,
+  });
 }
 
-// ── Guest receives state from Host ──
+function sendCmd(cmd){
+  if(gameMode==='guest') sendRaw({t:'cmd',cmd});
+}
+
 function onPeerMsg(msg){
+  if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
   if(msg.t==='state'){
-    // Reconstruct G from Host's authoritative state
-    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
-    G.res=msg.res; G.map=msg.map;
-    G.fog=[msg.fog, msg.fog]; // Guest only has P2 fog; index 0 = myP-1 = 1 → use [1]
-    G.bldgs=msg.bldgs; G.units=msg.units;
-    G.uc=msg.uc; G.bc=msg.bc;
-    G.myP=2;
+    G.tick=msg.tick;G.over=msg.over;G.winner=msg.winner;
+    G.res=msg.res;G.map=msg.map;
+    G.fog=[[],msg.fog];
+    G.bldgs=msg.bldgs;G.units=msg.units;
+    G.uc=msg.uc;G.bc=msg.bc;G.myP=2;
     el('h-tick').textContent='T'+G.tick;
-    updateHUD();
-    render();
-    if(G.over) showWin();
+    updateHUD();render();
+    if(G.over)showWin();
   }
 }
 
-// ── Guest sends a command to Host ──
-function sendCmd(cmd){
-  if(gameMode==='guest'&&conn&&conn.open)
-    conn.send({t:'cmd', cmd});
-}
-
-// ── Host applies a P2 command object ──
-function applyCmd(cmd, owner){
-  // cmd shape: {act, unitIds, tgt, buildType, bldgId, utype}
+function applyCmd(cmd,owner){
   if(cmd.act==='move'){
-    const units=G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner);
-    assignSpreadMove(units, cmd.tgt[0], cmd.tgt[1]);
+    const us=G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner);
+    assignSpreadMove(us,cmd.tgt[0],cmd.tgt[1]);
   }
   else if(cmd.act==='attack'){
-    const tgt=byId(cmd.tgt);
     G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
       .forEach(u=>{u.act='attack';u.tgt=cmd.tgt;});
   }
@@ -402,9 +460,9 @@ function applyCmd(cmd, owner){
       .forEach(u=>{u.act='repair';u.tgt=cmd.tgt;});
   }
   else if(cmd.act==='build'){
-    const d=BD[cmd.buildType]; const p=G.res[owner];
+    const d=BD[cmd.buildType],p=G.res[owner];
     if(p.gold>=d.cost.g&&p.wood>=d.cost.w&&canBuild(cmd.tgt[0],cmd.tgt[1])){
-      p.gold-=d.cost.g; p.wood-=d.cost.w;
+      p.gold-=d.cost.g;p.wood-=d.cost.w;
       addBldg(cmd.buildType,owner,cmd.tgt[0],cmd.tgt[1],true);
       const w=G.units.find(u=>cmd.unitIds.includes(u.id)&&u.type==='worker');
       if(w){w.act='move';w.tgt=cmd.tgt;}
@@ -412,20 +470,13 @@ function applyCmd(cmd, owner){
   }
   else if(cmd.act==='train'){
     const b=G.bldgs.find(b=>b.id===cmd.bldgId&&b.owner===owner);
-    if(!b) return;
-    const p=G.res[owner];
-    const cost=UD[cmd.utype].cost.g;
+    if(!b)return;
+    const p=G.res[owner],cost=UD[cmd.utype].cost.g;
     if(p.gold>=cost&&(cmd.utype==='worker'||p.food<p.foodMax)){
-      p.gold-=cost; b.tq.push(cmd.utype);
+      p.gold-=cost;b.tq.push(cmd.utype);
     }
   }
 }
-
-// Host queues incoming P2 commands
-peer; // (conn.on('data') already calls onPeerMsg which handles both roles)
-// Override onPeerMsg to split by role:
-const _onPeerMsg=onPeerMsg;
-// Redefine below after setupConn wiring (done via c.on('data', onPeerMsg) above)
 
 // ════════════════════════════════════
 // MULTI — hook into existing actions for Guest
