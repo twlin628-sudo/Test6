@@ -231,21 +231,277 @@ let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
 let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false};
 
 // ════════════════════════════════════
-// PEER
+// PEER — PeerJS two-player sync
+// Host = P1 runs tick(), sends state to Guest each tick
+// Guest = P2 receives state, renders P2 view, sends commands back
 // ════════════════════════════════════
 let peer=null, conn=null, peerRole=null;
+let P2cmdQueue=[]; // Host stores incoming P2 commands, executes next tick
 
+// ── Open peer panel ──
 function openPeer(role){
-  alert('多人模式需上傳至 GitHub Pages 後才能使用\n（Claude.ai 環境限制外部連線）\n\n請先用「單人測試」確認功能');
-}
-function closePeer(){ document.getElementById('peer-ovl').classList.remove('show'); }
-function guestConnect(){}
-function setupConn(){}
-function sendState(){}
-function onPeerMsg(){}
+  peerRole=role;
+  if(peer){try{peer.destroy();}catch(e){} peer=null; conn=null;}
 
-function startMulti(){ startSolo(); }
-function startMultiGuest(){ startSolo(); }
+  const ovl=el('peer-ovl');
+  ovl.classList.add('show');
+  el('peer-title').textContent = role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
+  el('peer-room-code').style.display='none';
+  el('peer-input').style.display   = role==='guest'?'block':'none';
+  el('peer-connect-btn').style.display='none';
+  el('peer-msg').textContent='載入 PeerJS...';
+
+  // Dynamically load PeerJS only when needed (avoids blocking main script)
+  if(typeof Peer==='undefined'){
+    const s=document.createElement('script');
+    s.src='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+    s.onload=()=>initPeer(role);
+    s.onerror=()=>{ el('peer-msg').textContent='❌ PeerJS 載入失敗，請確認網路後重試'; };
+    document.head.appendChild(s);
+  } else {
+    initPeer(role);
+  }
+}
+
+function initPeer(role){
+  el('peer-msg').textContent='連線伺服器中...';
+  const timeout=setTimeout(()=>{
+    el('peer-msg').textContent='❌ 連線逾時。請確認網路，或用單人模式。';
+  },10000);
+
+  peer=new Peer();
+  peer.on('open', myId=>{
+    clearTimeout(timeout);
+    if(role==='host'){
+      el('peer-room-code').textContent=myId;
+      el('peer-room-code').style.display='block';
+      el('peer-msg').textContent='↑ 將此 ID 傳給對方，等待連線...';
+      peer.on('connection', c=>setupConn(c));
+    } else {
+      el('peer-msg').textContent='將 Host 的 ID 貼入後按連線';
+      el('peer-connect-btn').style.display='block';
+    }
+  });
+  peer.on('error', e=>{
+    el('peer-msg').textContent='❌ 錯誤: '+e.type;
+  });
+}
+
+function guestConnect(){
+  const code=el('peer-input').value.trim();
+  if(!code){ alert('請貼上 Host 的 ID'); return; }
+  el('peer-msg').textContent='連線中...';
+  el('peer-connect-btn').style.display='none';
+  const c=peer.connect(code,{reliable:true});
+  setupConn(c);
+}
+
+function setupConn(c){
+  conn=c;
+  c.on('open',()=>{
+    el('peer-msg').textContent='✅ 連線成功！';
+    setTimeout(()=>{
+      closePeer();
+      if(peerRole==='host') startHost();
+      else                  startGuest();
+    },600);
+  });
+  c.on('data', onPeerMsg);
+  c.on('close',()=>glog('⚠️ 對方斷線'));
+  c.on('error', e=>glog('❌ 連線錯誤: '+e.type));
+}
+
+function closePeer(){ el('peer-ovl').classList.remove('show'); }
+
+// ── Host: start game, run tick loop, send state each tick ──
+function startHost(){
+  gameMode='host';
+  initGame(1); // Host is P1
+  P2cmdQueue=[];
+  clearInterval(tickTmr);
+  tickTmr=setInterval(()=>{
+    if(G.over){ clearInterval(tickTmr); return; }
+    // Apply queued P2 commands before tick
+    P2cmdQueue.splice(0).forEach(cmd=>applyCmd(cmd,2));
+    tick();
+    // Send state to Guest (filter out P1 fog so Guest can't cheat)
+    sendToGuest();
+  }, TICK_MS);
+  glog('Host 已連線，遊戲開始');
+}
+
+// ── Guest: wait for Host to send initial state ──
+function startGuest(){
+  gameMode='guest';
+  // Show game screen, wait for first state packet
+  el('menu').style.display='none';
+  el('game').style.display='flex';
+  // Disable speed button (Guest doesn't control tick speed)
+  el('speed-btn').style.display='none';
+  glog('Guest 已連線，等待遊戲資料...');
+}
+
+// ── Serialize state for Guest (strip P1 fog) ──
+function sendToGuest(){
+  if(!conn||!conn.open) return;
+  const payload={
+    t:'state',
+    tick:G.tick,
+    over:G.over, winner:G.winner,
+    res:G.res,
+    map:G.map,
+    fog:G.fog[1], // only P2 fog
+    bldgs:G.bldgs.map(b=>({...b})),
+    units:G.units.map(u=>({...u})),
+    uc:G.uc, bc:G.bc,
+  };
+  conn.send(payload);
+}
+
+// ── Guest receives state from Host ──
+function onPeerMsg(msg){
+  if(msg.t==='state'){
+    // Reconstruct G from Host's authoritative state
+    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
+    G.res=msg.res; G.map=msg.map;
+    G.fog=[msg.fog, msg.fog]; // Guest only has P2 fog; index 0 = myP-1 = 1 → use [1]
+    G.bldgs=msg.bldgs; G.units=msg.units;
+    G.uc=msg.uc; G.bc=msg.bc;
+    G.myP=2;
+    el('h-tick').textContent='T'+G.tick;
+    updateHUD();
+    render();
+    if(G.over) showWin();
+  }
+}
+
+// ── Guest sends a command to Host ──
+function sendCmd(cmd){
+  if(gameMode==='guest'&&conn&&conn.open)
+    conn.send({t:'cmd', cmd});
+}
+
+// ── Host applies a P2 command object ──
+function applyCmd(cmd, owner){
+  // cmd shape: {act, unitIds, tgt, buildType, bldgId, utype}
+  if(cmd.act==='move'){
+    const units=G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner);
+    assignSpreadMove(units, cmd.tgt[0], cmd.tgt[1]);
+  }
+  else if(cmd.act==='attack'){
+    const tgt=byId(cmd.tgt);
+    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
+      .forEach(u=>{u.act='attack';u.tgt=cmd.tgt;});
+  }
+  else if(cmd.act==='harvest'){
+    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
+      .forEach(u=>{u.act='harvest';u.tgt=cmd.tgt;});
+  }
+  else if(cmd.act==='repair'){
+    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
+      .forEach(u=>{u.act='repair';u.tgt=cmd.tgt;});
+  }
+  else if(cmd.act==='build'){
+    const d=BD[cmd.buildType]; const p=G.res[owner];
+    if(p.gold>=d.cost.g&&p.wood>=d.cost.w&&canBuild(cmd.tgt[0],cmd.tgt[1])){
+      p.gold-=d.cost.g; p.wood-=d.cost.w;
+      addBldg(cmd.buildType,owner,cmd.tgt[0],cmd.tgt[1],true);
+      const w=G.units.find(u=>cmd.unitIds.includes(u.id)&&u.type==='worker');
+      if(w){w.act='move';w.tgt=cmd.tgt;}
+    }
+  }
+  else if(cmd.act==='train'){
+    const b=G.bldgs.find(b=>b.id===cmd.bldgId&&b.owner===owner);
+    if(!b) return;
+    const p=G.res[owner];
+    const cost=UD[cmd.utype].cost.g;
+    if(p.gold>=cost&&(cmd.utype==='worker'||p.food<p.foodMax)){
+      p.gold-=cost; b.tq.push(cmd.utype);
+    }
+  }
+}
+
+// Host queues incoming P2 commands
+peer; // (conn.on('data') already calls onPeerMsg which handles both roles)
+// Override onPeerMsg to split by role:
+const _onPeerMsg=onPeerMsg;
+// Redefine below after setupConn wiring (done via c.on('data', onPeerMsg) above)
+
+// ════════════════════════════════════
+// MULTI — hook into existing actions for Guest
+// All action functions check gameMode and send cmd if Guest
+// ════════════════════════════════════
+function multiMove(units,tx,ty){
+  if(gameMode==='guest'){
+    sendCmd({act:'move', unitIds:units.map(u=>u.id), tgt:[tx,ty]});
+    // Optimistic local preview
+    assignSpreadMove(units,tx,ty);
+  } else {
+    assignSpreadMove(units,tx,ty);
+  }
+}
+function multiAttack(units,tgtId){
+  if(gameMode==='guest') sendCmd({act:'attack', unitIds:units.map(u=>u.id), tgt:tgtId});
+  units.forEach(u=>{u.act='attack';u.tgt=tgtId;});
+}
+function multiHarvest(units,pos){
+  if(gameMode==='guest') sendCmd({act:'harvest', unitIds:units.map(u=>u.id), tgt:pos});
+  units.forEach(u=>{u.act='harvest';u.tgt=pos;});
+}
+function multiRepair(units,bldgId){
+  if(gameMode==='guest') sendCmd({act:'repair', unitIds:units.map(u=>u.id), tgt:bldgId});
+  units.forEach(u=>{u.act='repair';u.tgt=bldgId;});
+}
+function multiBuild(units,buildType,pos){
+  const d=BD[buildType]; const p=G.res[G.myP];
+  if(p.gold<d.cost.g||p.wood<d.cost.w){glog('❌ 資源不足');return;}
+  const w=units.find(u=>u.type==='worker'); if(!w) return;
+  if(gameMode==='guest'){
+    sendCmd({act:'build', unitIds:units.map(u=>u.id), buildType, tgt:pos});
+    // Optimistic deduct locally (will be corrected on next state sync)
+    p.gold-=d.cost.g; p.wood-=d.cost.w;
+  } else {
+    p.gold-=d.cost.g; p.wood-=d.cost.w;
+    addBldg(buildType,G.myP,pos[0],pos[1],true);
+  }
+  w.act='move'; w.tgt=pos;
+  glog(`🏗️ 建造 ${buildType} → ${cs(pos[0],pos[1])}`);
+  updateHUD();
+}
+function multiTrain(bldgId,utype){
+  const b=G.bldgs.find(b=>b.id===bldgId); if(!b) return;
+  const p=G.res[G.myP];
+  const cost=UD[utype].cost.g;
+  if(p.gold<cost){glog('❌ 金幣不足');return;}
+  if(utype!=='worker'&&p.food>=p.foodMax){glog('❌ 食物已滿');return;}
+  if(gameMode==='guest'){
+    sendCmd({act:'train', bldgId, utype});
+    p.gold-=cost; // optimistic
+  } else {
+    p.gold-=cost; b.tq.push(utype);
+  }
+  glog(`✅ ${utype} 加入訓練`);
+  updateHUD(); showBldgPanel(b);
+}
+
+// Override onPeerMsg for Host to queue P2 commands
+function onPeerMsg(msg){
+  if(gameMode==='host'&&msg.t==='cmd'){
+    P2cmdQueue.push(msg.cmd);
+    return;
+  }
+  if(msg.t==='state'){
+    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
+    G.res=msg.res; G.map=msg.map;
+    G.fog=[[],msg.fog]; // index 1 = P2 fog (myP=2, so fog[myP-1]=fog[1])
+    G.bldgs=msg.bldgs; G.units=msg.units;
+    G.uc=msg.uc; G.bc=msg.bc;
+    G.myP=2;
+    el('h-tick').textContent='T'+G.tick;
+    updateHUD(); render();
+    if(G.over) showWin();
+  }
+}
 
 // ════════════════════════════════════
 // INIT
@@ -336,7 +592,7 @@ function updateFog(){
   });
 }
 
-function fog1(x,y){return G.fog[0][y]?.[x];} // fog state for P1
+function fog1(x,y){return G.fog[(G.myP||1)-1]?.[y]?.[x];} // fog for current player
 function canSee(owner,x,y){return G.fog[owner-1]?.[y]?.[x]==='v';}
 
 // ════════════════════════════════════
@@ -500,7 +756,7 @@ function finalizeDrag(ex,ey){
   const by=Math.max(PT.startY,ey)-r.top +wrap.scrollTop;
   const gx0=Math.floor(ax/CS),gy0=Math.floor(ay/CS);
   const gx1=Math.floor(bx/CS),gy1=Math.floor(by/CS);
-  const sel=G.units.filter(u=>u.owner===1&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
+  const sel=G.units.filter(u=>u.owner===(G.myP||1)&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
   setBoxMode(false); // always exit box mode after drag
   if(sel.length>0){
     SEL.phase='sel'; SEL.selUnits=sel; SEL.selBldg=null;
@@ -515,10 +771,10 @@ function finalizeDrag(ex,ey){
 function onTap(x,y){
   const f=fog1(x,y);
   const terrain=G.map[y][x];
-  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===1);
-  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===1);
-  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===2):null;
-  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner===2):null;
+  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===G.myP);
+  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===G.myP);
+  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner!==G.myP):null;
+  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner!==G.myP):null;
 
   // ── BUILD PLACEMENT PHASE ──
   if(SEL.phase==='build_place'){
@@ -538,7 +794,7 @@ function onTap(x,y){
     // Tap enemy → attack (keep selection)
     if(enUnit||enBldg){
       const tgt=enUnit||enBldg;
-      units.forEach(u=>{u.act='attack';u.tgt=tgt.id;});
+      multiAttack(units, tgt.id);
       glog(`⚔️ ${units.length}個單位攻擊 ${dsp(tgt)}`);
       refreshSelPanel(); return;
     }
@@ -547,7 +803,7 @@ function onTap(x,y){
     if(myBldg&&myBldg.hp<myBldg.mhp){
       const wks=units.filter(u=>u.type==='worker');
       if(wks.length>0){
-        wks.forEach(u=>{u.act='repair';u.tgt=myBldg.id;});
+        multiRepair(wks, myBldg.id);
         glog(`🔧 ${wks.length}個Worker → 修復 ${myBldg.type}`);
         refreshSelPanel(); return;
       }
@@ -557,7 +813,7 @@ function onTap(x,y){
     if(terrain===T.G||terrain===T.W){
       const wks=units.filter(u=>u.type==='worker');
       if(wks.length>0){
-        wks.forEach(u=>{u.act='harvest';u.tgt=[x,y];});
+        multiHarvest(wks,[x,y]);
         glog(`⛏️ ${wks.length}個Worker採集${terrain===T.G?'💰':'🌲'}`);
         refreshSelPanel(); return;
       }
@@ -565,7 +821,7 @@ function onTap(x,y){
 
     // Tap walkable cell → move (keep selection)
     if(canWalk(x,y)){
-      assignSpreadMove(units, x, y);
+      multiMove(units, x, y);
       glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
       refreshSelPanel(); return;
     }
@@ -623,7 +879,7 @@ function selectBldg(b){
 }
 
 function showUnitPanel(u){
-  const p=G.res[1]; let html='';
+  const p=G.res[G.myP||1]; let html='';
   if(u.type==='worker'){
     html+=`<span class="hint">點地圖移動・點💰🌲採集・點受損建築修復・點敵人攻擊</span>`;
     html+=mkAbtn('🌾 建農場', '60🪙30🌲', p.gold>=60&&p.wood>=30, `startBuild('farm')`);
@@ -642,7 +898,7 @@ function showBldgPanel(b){
     setActions(`<span class="hint">建造中 ${b.bp}/${b.bt} ticks</span><button class="ab" onclick="resetSel()">關閉</button>`);
     return;
   }
-  const p=G.res[1]; let html='';
+  const p=G.res[G.myP||1]; let html='';
   if(b.type==='townhall'){
     html+=mkAbtn('👷 訓練Worker','50🪙', p.gold>=50, `doTrain('${b.id}','worker')`);
   }
@@ -675,26 +931,14 @@ function startBuild(type){
 
 function execBuild(x,y){
   const type=SEL.buildType;
-  const d=BD[type]; const p=G.res[1];
-  if(p.gold<d.cost.g||p.wood<d.cost.w){glog('❌ 資源不足');return;}
+  if(!canBuild(x,y)){glog('❌ 位置被佔用');return;}
   const worker=SEL.selUnits.find(u=>u.type==='worker');
   if(!worker){glog('❌ 需要Worker');return;}
-  p.gold-=d.cost.g; p.wood-=d.cost.w;
-  addBldg(type,1,x,y,true);
-  worker.act='move'; worker.tgt=[x,y];
-  glog(`🏗️ 建造 ${type} → ${cs(x,y)}`);
-  updateHUD();
+  multiBuild(SEL.selUnits, type, [x,y]);
 }
 
 function doTrain(bldgId,utype){
-  const b=G.bldgs.find(b=>b.id===bldgId); if(!b) return;
-  const p=G.res[1];
-  const cost=UD[utype].cost.g;
-  if(p.gold<cost){glog('❌ 金幣不足');return;}
-  if(utype!=='worker'&&p.food>=p.foodMax){glog('❌ 食物已滿');return;}
-  p.gold-=cost; b.tq.push(utype);
-  glog(`✅ ${utype} 加入訓練`);
-  updateHUD(); showBldgPanel(b);
+  multiTrain(bldgId,utype);
 }
 
 function setBoxMode(on){
@@ -1022,7 +1266,7 @@ function setInfo(icon,name,hp,state){
 function setActions(html){el('action-bar').innerHTML=html;}
 function glog(msg){el('logbar').textContent=msg;}
 function updateHUD(){
-  const p=G.res[1];
+  const p=G.res[G.myP||1];
   el('h-gold').textContent=p.gold;
   el('h-wood').textContent=p.wood;
   el('h-food').textContent=p.food;
@@ -1049,8 +1293,12 @@ function showWin(){
 
 function goMenu(){
   clearInterval(tickTmr);
+  if(conn){try{conn.close();}catch(e){} conn=null;}
+  if(peer){try{peer.destroy();}catch(e){} peer=null;}
+  P2cmdQueue=[];
   el('game').style.display='none';
   el('win-ovl').classList.remove('show');
+  el('speed-btn').style.display='';
   el('menu').style.display='flex';
   resetSel();
 }
