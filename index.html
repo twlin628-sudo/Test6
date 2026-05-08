@@ -172,6 +172,10 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
       <span id="i-name">點選單位或建築</span>
       <span id="i-hp"></span>
       <span id="i-state"></span>
+      <button id="box-btn" onclick="toggleBoxMode()"
+        style="margin-left:auto;padding:2px 10px;background:var(--g3);border:1px solid var(--g2);
+               color:var(--g);font-family:'Rajdhani';font-size:12px;font-weight:700;
+               cursor:pointer;white-space:nowrap;flex-shrink:0;">⬚ 框選</button>
     </div>
     <div id="action-bar"><span class="hint">點我方👷Worker或⚔️士兵開始<br>拖曳可框選多個單位</span></div>
     <div id="logbar">── WAR.SH 開始 ──</div>
@@ -221,7 +225,7 @@ let tickTmr=null, speedLv=1, gameMode='solo';
 // selUnits: [unit,...] (my units currently selected)
 // selBldg: building | null
 // buildType: string when phase=build_place
-let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null};
+let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
 
 // ─ Pointer state for drag-select vs scroll vs tap ─
 let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false};
@@ -452,7 +456,8 @@ function ptMove(cx,cy){
   const dx=cx-PT.startX, dy=cy-PT.startY;
   if(Math.abs(dx)<10&&Math.abs(dy)<10) return false;
   PT.moved=true;
-  if(!PT.mode) PT.mode = SEL.selUnits.length>0 ? 'drag' : 'scroll';
+  // Only drag-select when boxMode is explicitly ON; otherwise always scroll
+  if(!PT.mode) PT.mode = SEL.boxMode ? 'drag' : 'scroll';
   if(PT.mode==='drag'){ PT.dragging=true; updateDragBox(cx,cy); }
   else { const w=el('map-wrap'); w.scrollLeft=PT.startScrX-dx; w.scrollTop=PT.startScrY-dy; }
   return true;
@@ -496,6 +501,7 @@ function finalizeDrag(ex,ey){
   const gx0=Math.floor(ax/CS),gy0=Math.floor(ay/CS);
   const gx1=Math.floor(bx/CS),gy1=Math.floor(by/CS);
   const sel=G.units.filter(u=>u.owner===1&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
+  setBoxMode(false); // always exit box mode after drag
   if(sel.length>0){
     SEL.phase='sel'; SEL.selUnits=sel; SEL.selBldg=null;
     showMultiPanel(sel);
@@ -691,10 +697,30 @@ function doTrain(bldgId,utype){
   updateHUD(); showBldgPanel(b);
 }
 
+function setBoxMode(on){
+  SEL.boxMode=on;
+  const btn=el('box-btn');
+  if(!btn) return;
+  if(on){
+    btn.textContent='✕ 取消框選';
+    btn.style.borderColor='var(--y)';
+    btn.style.color='var(--y)';
+  } else {
+    btn.textContent='⬚ 框選';
+    btn.style.borderColor='';
+    btn.style.color='';
+  }
+}
+
+function toggleBoxMode(){
+  setBoxMode(!SEL.boxMode);
+}
+
 function resetSel(){
-  SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null};
+  SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
+  setBoxMode(false);
   setInfo('🗺️','點選單位或建築','','');
-  setActions('<span class="hint">點我方👷Worker或⚔️士兵開始<br>拖曳可框選多個單位</span>');
+  setActions('<span class="hint">點我方👷Worker或⚔️士兵開始<br>按 ⬚框選 可拖曳框選多個單位</span>');
   render();
 }
 
