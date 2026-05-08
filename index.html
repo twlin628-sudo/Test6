@@ -407,9 +407,15 @@ function startHost(){
 
 function startGuest(){
   gameMode='guest';
-  el('menu').style.display='none';
-  el('game').style.display='flex';
+  initGame(2); // Guest is P2 — builds DOM, sets G.myP=2
   el('speed-btn').style.display='none';
+  clearInterval(tickTmr); tickTmr=null;
+  // Scroll to P2 spawn (right side of map)
+  setTimeout(()=>{
+    const wrap=el('map-wrap');
+    wrap.scrollLeft=MW*CS-wrap.clientWidth;
+    wrap.scrollTop=Math.max(0,10*CS-wrap.clientHeight/2);
+  },50);
   glog('✅ Guest 已連線，等待遊戲資料...');
 }
 
@@ -431,14 +437,17 @@ function sendCmd(cmd){
 function onPeerMsg(msg){
   if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
   if(msg.t==='state'){
-    G.tick=msg.tick;G.over=msg.over;G.winner=msg.winner;
-    G.res=msg.res;G.map=msg.map;
-    G.fog=[[],msg.fog];
-    G.bldgs=msg.bldgs;G.units=msg.units;
-    G.uc=msg.uc;G.bc=msg.bc;G.myP=2;
+    // Preserve DOM-dependent fields, only update game logic state
+    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
+    G.res=msg.res;
+    G.map=msg.map;           // terrain (same as local but sync anyway)
+    G.fog=[[],msg.fog];      // index 1 = P2 fog, fog1() reads G.fog[G.myP-1]=G.fog[1]
+    G.bldgs=msg.bldgs; G.units=msg.units;
+    G.uc=msg.uc; G.bc=msg.bc;
+    G.myP=2;                 // always P2 as Guest
     el('h-tick').textContent='T'+G.tick;
-    updateHUD();render();
-    if(G.over)showWin();
+    updateHUD(); render();
+    if(G.over) showWin();
   }
 }
 
