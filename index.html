@@ -199,7 +199,7 @@ const T={E:0,G:1,W:2,M:3}; // terrain: Empty Gold Wood Mountain
 const IC={ // icons
   townhall:'🏰',farm:'🌾',barracks:'⚔️',tower:'🗼',
   worker:'👷',soldier:'🗡️',archer:'🏹',
-  e_townhall:'🏯',e_farm:'🌾',e_barracks:'🔴',e_tower:'🗽',
+  e_townhall:'🏯',e_farm:'🌾',e_barracks:'🔴',e_tower:'🗼',
   e_worker:'👺',e_soldier:'👹',e_archer:'👻',
 };
 const BD={ // building defs
@@ -395,6 +395,7 @@ function startHost(){
   gameMode='host';
   initGame(1);
   P2cmdQueue=[];
+  guestMapSent=false;
   clearInterval(tickTmr);
   tickTmr=setInterval(()=>{
     if(G.over){clearInterval(tickTmr);return;}
@@ -419,15 +420,19 @@ function startGuest(){
   glog('✅ Guest 已連線，等待遊戲資料...');
 }
 
+let guestMapSent=false;
 function sendToGuest(){
-  sendRaw({
+  const payload={
     t:'state',
     tick:G.tick,over:G.over,winner:G.winner,
-    res:G.res,map:G.map,fog:G.fog[1],
+    res:G.res,fog:G.fog[1],
     bldgs:G.bldgs.map(b=>({...b})),
     units:G.units.map(u=>({...u})),
     uc:G.uc,bc:G.bc,
-  });
+  };
+  // Only send map on first packet (terrain never changes)
+  if(!guestMapSent){ payload.map=G.map; guestMapSent=true; }
+  sendRaw(payload);
 }
 
 function sendCmd(cmd){
@@ -544,24 +549,7 @@ function multiTrain(bldgId,utype){
   updateHUD(); showBldgPanel(b);
 }
 
-// Override onPeerMsg for Host to queue P2 commands
-function onPeerMsg(msg){
-  if(gameMode==='host'&&msg.t==='cmd'){
-    P2cmdQueue.push(msg.cmd);
-    return;
-  }
-  if(msg.t==='state'){
-    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
-    G.res=msg.res; G.map=msg.map;
-    G.fog=[[],msg.fog]; // index 1 = P2 fog (myP=2, so fog[myP-1]=fog[1])
-    G.bldgs=msg.bldgs; G.units=msg.units;
-    G.uc=msg.uc; G.bc=msg.bc;
-    G.myP=2;
-    el('h-tick').textContent='T'+G.tick;
-    updateHUD(); render();
-    if(G.over) showWin();
-  }
-}
+// (onPeerMsg defined above in Firebase section handles both host and guest)
 
 // ════════════════════════════════════
 // INIT
@@ -665,7 +653,7 @@ function buildDOM(){
   canvas.innerHTML='';
   canvas.style.width=(MW*CS)+'px';
   canvas.style.height=(MH*CS)+'px';
-  CE={};
+  CE={}; renderCache={};
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const d=document.createElement('div');
     d.className='cell fog'; d.dataset.x=x; d.dataset.y=y;
@@ -679,64 +667,88 @@ function buildDOM(){
 }
 
 // ════════════════════════════════════
-// RENDER
+// RENDER — dirty check, only update changed cells
 // ════════════════════════════════════
+let renderCache={}; // key -> last rendered string
+
+function cellKey(x,y,f,icon,hp,mhp,isEn){
+  return `${f}|${icon}|${hp}|${mhp}|${isEn?1:0}`;
+}
+
 function render(){
-  // build lookup maps
+  const myP=G.myP||1;
   const bAt={},uAt={};
   G.bldgs.forEach(b=>{bAt[`${b.x},${b.y}`]=b;});
   G.units.forEach(u=>{const k=`${u.x},${u.y}`;if(!uAt[k])uAt[k]=[];uAt[k].push(u);});
 
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
-    const d=CE[`${x},${y}`];
-    const f=fog1(x,y); // h|s|v
+    const d=CE[`${x},${y}`]; if(!d) continue;
+    const f=fog1(x,y);
+
+    // compute what this cell should show
+    const t=G.map[y]?.[x]??T.E;
+    let icon=f==='h'?'':(t===T.G?'💰':t===T.W?'🌲':t===T.M?'🏔️':'');
+    let hp=0,mhp=1,isEn=false;
+
+    if(f!=='h'){
+      const b=bAt[`${x},${y}`];
+      if(b&&(f==='v'||b.owner===myP)){
+        icon=b.uc?'🏗️':(b.owner!==myP?(IC['e_'+b.type]||'🏯'):(IC[b.type]||'🏠'));
+        hp=b.hp;mhp=b.mhp;isEn=b.owner!==myP;
+      }
+      const us=uAt[`${x},${y}`];
+      if(us&&f==='v'){
+        const myU=us.find(u=>u.owner===myP), enU=us.find(u=>u.owner!==myP);
+        const show=myU||enU;
+        if(show){
+          icon=(show.owner!==myP?(IC['e_'+show.type]||'👾'):(IC[show.type]||'🧍'));
+          hp=show.hp;mhp=show.mhp;isEn=show.owner!==myP;
+        }
+        if(us.length>1) icon+='⁺';
+      }
+    }
+
+    const key=cellKey(x,y,f,icon,hp,mhp,isEn);
+    if(renderCache[`${x},${y}`]===key) continue; // no change, skip
+    renderCache[`${x},${y}`]=key;
+
+    // Apply to DOM
+    const fogCls=f==='h'?'fog':f==='s'?'seen':'vis';
+    // preserve highlight classes
+    const hlCls=['h-sel','h-build'].filter(c=>d.classList.contains(c));
+    d.className='cell '+fogCls+(hlCls.length?' '+hlCls.join(' '):'');
+
     const ci=d.querySelector('.ci');
     const hpb=d.querySelector('.hpb');
     const hpf=d.querySelector('.hpf');
-
-    d.className='cell '+(f==='h'?'fog':f==='s'?'seen':'vis');
-
-    if(f==='h'){ci.textContent='';hpb.style.display='none';continue;}
-
-    // terrain
-    const t=G.map[y][x];
-    let icon=t===T.G?'💰':t===T.W?'🌲':t===T.M?'🏔️':'';
-    let hp=0,mhp=1,isEn=false;
-
-    // building
-    const b=bAt[`${x},${y}`];
-    if(b&&(f==='v'||b.owner===1)){
-      icon=b.uc?'🏗️':(b.owner===2?(IC['e_'+b.type]||'🏯'):(IC[b.type]||'🏠'));
-      hp=b.hp;mhp=b.mhp;isEn=b.owner===2;
-    }
-    // units (top priority, only if visible)
-    const us=uAt[`${x},${y}`];
-    if(us&&f==='v'){
-      const myU=us.find(u=>u.owner===1),enU=us.find(u=>u.owner===2);
-      const show=myU||enU;
-      if(show){icon=(show.owner===2?(IC['e_'+show.type]||'👾'):(IC[show.type]));hp=show.hp;mhp=show.mhp;isEn=show.owner===2;}
-      if(us.length>1) icon+='⁺';
-    }
-
-    ci.textContent=icon;
-    if(hp>0){
+    if(ci) ci.textContent=icon;
+    if(hp>0&&hpb&&hpf){
       hpb.style.display='block';
       const pct=Math.max(0,hp/mhp*100);
       hpf.style.width=pct+'%';
       hpf.className='hpf '+(isEn?'en':pct<30?'lo':'my');
-    } else hpb.style.display='none';
+    } else if(hpb) hpb.style.display='none';
   }
   applyHighlights();
 }
 
 function applyHighlights(){
-  Object.values(CE).forEach(d=>d.classList.remove('h-sel','h-build'));
-  SEL.selUnits.forEach(u=>CE[`${u.x},${u.y}`]?.classList.add('h-sel'));
-  if(SEL.selBldg) CE[`${SEL.selBldg.x},${SEL.selBldg.y}`]?.classList.add('h-sel');
-  if(SEL.phase==='build_place'){
-    for(let y=0;y<MH;y++) for(let x=0;x<MW;x++)
-      if(canBuild(x,y)&&fog1(x,y)!=='h') CE[`${x},${y}`]?.classList.add('h-build');
-  }
+  // Only touch cells that need highlight changes
+  const selKeys=new Set(SEL.selUnits.map(u=>`${u.x},${u.y}`));
+  if(SEL.selBldg) selKeys.add(`${SEL.selBldg.x},${SEL.selBldg.y}`);
+
+  Object.entries(CE).forEach(([k,d])=>{
+    const wantSel=selKeys.has(k);
+    const hasSel=d.classList.contains('h-sel');
+    if(wantSel&&!hasSel) d.classList.add('h-sel');
+    else if(!wantSel&&hasSel) d.classList.remove('h-sel');
+
+    const [x,y]=k.split(',').map(Number);
+    const wantBuild=SEL.phase==='build_place'&&canBuild(x,y)&&fog1(x,y)!=='h';
+    const hasBuild=d.classList.contains('h-build');
+    if(wantBuild&&!hasBuild) d.classList.add('h-build');
+    else if(!wantBuild&&hasBuild) d.classList.remove('h-build');
+  });
 }
 
 // ════════════════════════════════════
@@ -1115,6 +1127,7 @@ function tick(){
       && G.fog[tw.owner-1][u.y][u.x]==='v')
     .slice(0,1).forEach(u=>{
       u.hp-=BD.tower.atk;
+      hitFx(u.x,u.y);
       if(u.hp<=0) dead.add(u.id);
     });
   });
@@ -1346,16 +1359,15 @@ function cycleSpeed(){
 
 function showWin(){
   clearInterval(tickTmr);
-  el('win-txt').textContent=G.winner===1?'🏆 勝利！':'💀 敗北...';
-  el('win-sub').textContent=`Tick ${G.tick} — ${G.winner===1?'摧毀敵方主城':'主城被摧毀'}`;
+  const iWin = G.winner === (G.myP||1);
+  el('win-txt').textContent = iWin ? '🏆 勝利！' : '💀 敗北...';
+  el('win-sub').textContent = `Tick ${G.tick} — ${iWin ? '摧毀敵方主城！' : '主城被摧毀...'}`;
   el('win-ovl').classList.add('show');
 }
 
 function goMenu(){
   clearInterval(tickTmr);
-  if(conn){try{conn.close();}catch(e){} conn=null;}
-  if(peer){try{peer.destroy();}catch(e){} peer=null;}
-  P2cmdQueue=[];
+  cleanupRTC();
   el('game').style.display='none';
   el('win-ovl').classList.remove('show');
   el('speed-btn').style.display='';
