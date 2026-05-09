@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.1.0</title>
+<title>WAR.SH v1.1.2</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.0</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.2</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -427,7 +427,7 @@ function spriteConstruct(){
   `,'');
 }
 
-// Sprite lookup table
+// Sprite lookup table — functions called once at init to build SP_CACHE
 const SP={
   worker:    ()=>spriteWorker(MC),
   soldier:   ()=>spriteSoldier(MC),
@@ -448,6 +448,9 @@ const SP={
   mountain:  ()=>spriteMountain(),
   construct: ()=>spriteConstruct(),
 };
+// Pre-generate all sprite strings once — never call SP[x]() again after this
+const SPC={}; // Sprite Pre-generated Cache
+Object.keys(SP).forEach(k=>{ SPC[k]=SP[k](); });
 const BD={ // building defs
   townhall:{cost:{g:0,w:0},  hp:300,food:10,bt:0 },
   farm:    {cost:{g:60,w:30},hp:80, food:5, bt:8 },
@@ -890,7 +893,7 @@ function canSee(owner,x,y){return G.fog[owner-1]?.[y]?.[x]==='v';}
 // ════════════════════════════════════
 // BUILD DOM
 // ════════════════════════════════════
-let CE={}; // cell elements keyed "x,y"
+let CE={}; // "x,y" -> {el, ci, hpb, hpf}
 
 function buildDOM(){
   const canvas=el('map-canvas');
@@ -902,9 +905,17 @@ function buildDOM(){
     const d=document.createElement('div');
     d.className='cell fog'; d.dataset.x=x; d.dataset.y=y;
     d.style.left=(x*CS)+'px'; d.style.top=(y*CS)+'px';
-    d.innerHTML=`<span class="clbl">${cs(x,y)}</span><span class="ci" style="position:relative;display:flex;align-items:center;justify-content:center;width:40px;height:40px;"></span>`+
-                `<div class="hpb" style="display:none"><div class="hpf my"></div></div>`;
-    CE[`${x},${y}`]=d;
+    const lbl=document.createElement('span');
+    lbl.className='clbl'; lbl.textContent=cs(x,y);
+    const ci=document.createElement('span');
+    ci.style.cssText='position:relative;display:flex;align-items:center;justify-content:center;width:40px;height:40px;';
+    const hpb=document.createElement('div');
+    hpb.className='hpb'; hpb.style.display='none';
+    const hpf=document.createElement('div');
+    hpf.className='hpf my';
+    hpb.appendChild(hpf);
+    d.appendChild(lbl); d.appendChild(ci); d.appendChild(hpb);
+    CE[`${x},${y}`]={el:d, ci, hpb, hpf};
     canvas.appendChild(d);
   }
   setupPointer();
@@ -926,28 +937,24 @@ function render(){
   G.units.forEach(u=>{const k=`${u.x},${u.y}`;if(!uAt[k])uAt[k]=[];uAt[k].push(u);});
 
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
-    const d=CE[`${x},${y}`]; if(!d) continue;
+    const c=CE[`${x},${y}`]; if(!c) continue;
     const f=fog1(x,y);
-
-    // compute sprite key for this cell
     const t=G.map[y]?.[x]??T.E;
     let sprKey=f==='h'?'':(t===T.G?'gold':t===T.W?'tree':t===T.M?'mountain':'');
-    let hp=0,mhp=1,isEn=false;
-    let multi=false;
+    let hp=0,mhp=1,isEn=false,multi=false;
 
     if(f!=='h'){
       const b=bAt[`${x},${y}`];
       if(b&&(f==='v'||b.owner===myP)){
         sprKey=b.uc?'construct':(b.owner!==myP?'e_'+b.type:b.type);
-        hp=b.hp;mhp=b.mhp;isEn=b.owner!==myP;
+        hp=b.hp; mhp=b.mhp; isEn=b.owner!==myP;
       }
       const us=uAt[`${x},${y}`];
       if(us&&f==='v'){
-        const myU=us.find(u=>u.owner===myP), enU=us.find(u=>u.owner!==myP);
-        const show=myU||enU;
+        const show=us.find(u=>u.owner===myP)||us.find(u=>u.owner!==myP);
         if(show){
-          sprKey=(show.owner!==myP?'e_'+show.type:show.type);
-          hp=show.hp;mhp=show.mhp;isEn=show.owner!==myP;
+          sprKey=show.owner!==myP?'e_'+show.type:show.type;
+          hp=show.hp; mhp=show.mhp; isEn=show.owner!==myP;
         }
         if(us.length>1) multi=true;
       }
@@ -957,58 +964,49 @@ function render(){
     if(renderCache[`${x},${y}`]===cacheKey) continue;
     renderCache[`${x},${y}`]=cacheKey;
 
+    // Update fog class (preserve highlight classes)
     const fogCls=f==='h'?'fog':f==='s'?'seen':'vis';
-    const hlCls=['h-sel','h-build'].filter(c=>d.classList.contains(c));
-    d.className='cell '+fogCls+(hlCls.length?' '+hlCls.join(' '):'');
+    const hlCls=['h-sel','h-build'].filter(cls=>c.el.classList.contains(cls));
+    c.el.className='cell '+fogCls+(hlCls.length?' '+hlCls.join(' '):'');
 
-    const ci=d.querySelector('.ci');
-    const hpb=d.querySelector('.hpb');
-    const hpf=d.querySelector('.hpf');
-
-    // render sprite or empty
-    if(ci){
-      if(sprKey && SP[sprKey]){
-        ci.innerHTML=SP[sprKey]()+( multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'');
-        ci.style.fontSize='';
-      } else {
-        ci.innerHTML='';
-      }
+    // Sprite — use pre-generated string from SPC (no function call)
+    if(sprKey && SPC[sprKey]){
+      c.ci.innerHTML=SPC[sprKey]+(multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'');
+    } else {
+      c.ci.innerHTML='';
     }
 
-    if(hp>0&&hpb&&hpf){
-      hpb.style.display='block';
+    // HP bar — direct reference, no querySelector
+    if(hp>0){
+      c.hpb.style.display='block';
       const pct=Math.max(0,hp/mhp*100);
-      hpf.style.width=pct+'%';
-      hpf.className='hpf '+(isEn?'en':pct<30?'lo':'my');
-    } else if(hpb) hpb.style.display='none';
+      c.hpf.style.width=pct+'%';
+      c.hpf.className='hpf '+(isEn?'en':pct<30?'lo':'my');
+    } else {
+      c.hpb.style.display='none';
+    }
   }
   applyHighlights();
 }
 
 function applyHighlights(){
-  // Re-resolve selected unit positions from current G.units by id
-  // This fixes Guest where G.units is replaced each tick (old refs have stale coords)
   const liveSelUnits=SEL.selUnits.map(u=>G.units.find(v=>v.id===u.id)).filter(Boolean);
-  // Also update SEL.selUnits references to live objects
   SEL.selUnits=liveSelUnits;
-
   const selKeys=new Set(liveSelUnits.map(u=>`${u.x},${u.y}`));
   if(SEL.selBldg){
     const lb=G.bldgs.find(b=>b.id===SEL.selBldg.id);
     if(lb){ SEL.selBldg=lb; selKeys.add(`${lb.x},${lb.y}`); }
   }
-
-  Object.entries(CE).forEach(([k,d])=>{
+  Object.entries(CE).forEach(([k,c])=>{
     const wantSel=selKeys.has(k);
-    const hasSel=d.classList.contains('h-sel');
-    if(wantSel&&!hasSel) d.classList.add('h-sel');
-    else if(!wantSel&&hasSel) d.classList.remove('h-sel');
-
+    const hasSel=c.el.classList.contains('h-sel');
+    if(wantSel&&!hasSel) c.el.classList.add('h-sel');
+    else if(!wantSel&&hasSel) c.el.classList.remove('h-sel');
     const [x,y]=k.split(',').map(Number);
     const wantBuild=SEL.phase==='build_place'&&canBuild(x,y)&&fog1(x,y)!=='h';
-    const hasBuild=d.classList.contains('h-build');
-    if(wantBuild&&!hasBuild) d.classList.add('h-build');
-    else if(!wantBuild&&hasBuild) d.classList.remove('h-build');
+    const hasBuild=c.el.classList.contains('h-build');
+    if(wantBuild&&!hasBuild) c.el.classList.add('h-build');
+    else if(!wantBuild&&hasBuild) c.el.classList.remove('h-build');
   });
 }
 
@@ -1592,9 +1590,9 @@ function nearTile(cx,cy,type){
 }
 
 function hitFx(x,y){
-  const d=CE[`${x},${y}`]; if(!d) return;
-  d.classList.add('hit-fx');
-  setTimeout(()=>d.classList.remove('hit-fx'),360);
+  const c=CE[`${x},${y}`]; if(!c) return;
+  c.el.classList.add('hit-fx');
+  setTimeout(()=>c.el.classList.remove('hit-fx'),360);
 }
 
 // ════════════════════════════════════
