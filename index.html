@@ -641,7 +641,6 @@ function startHost(){
   gameMode='host';
   initGame(1);
   P2cmdQueue=[];
-  guestMapSent=false;
   clearInterval(tickTmr);
   tickTmr=setInterval(()=>{
     if(G.over){clearInterval(tickTmr);return;}
@@ -666,19 +665,15 @@ function startGuest(){
   glog('✅ Guest 已連線，等待遊戲資料...');
 }
 
-let guestMapSent=false;
 function sendToGuest(){
-  const payload={
+  sendRaw({
     t:'state',
-    tick:G.tick,over:G.over,winner:G.winner,
-    res:G.res,fog:G.fog[1],
+    tick:G.tick, over:G.over, winner:G.winner,
+    res:G.res, map:G.map, fog:G.fog[1],
     bldgs:G.bldgs.map(b=>({...b})),
     units:G.units.map(u=>({...u})),
-    uc:G.uc,bc:G.bc,
-  };
-  // Only send map on first packet (terrain never changes)
-  if(!guestMapSent){ payload.map=G.map; guestMapSent=true; }
-  sendRaw(payload);
+    uc:G.uc, bc:G.bc,
+  });
 }
 
 function sendCmd(cmd){
@@ -688,14 +683,17 @@ function sendCmd(cmd){
 function onPeerMsg(msg){
   if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
   if(msg.t==='state'){
-    // Preserve DOM-dependent fields, only update game logic state
     G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
     G.res=msg.res;
-    G.map=msg.map;           // terrain (same as local but sync anyway)
-    G.fog=[[],msg.fog];      // index 1 = P2 fog, fog1() reads G.fog[G.myP-1]=G.fog[1]
+    // Only update map if host sent it (first packet only)
+    if(msg.map) G.map=msg.map;
+    G.fog=[[],msg.fog]; // index 1 = P2 fog
     G.bldgs=msg.bldgs; G.units=msg.units;
     G.uc=msg.uc; G.bc=msg.bc;
-    G.myP=2;                 // always P2 as Guest
+    G.myP=2;
+    // Clear render cache so all changed cells re-draw
+    // (Guest replaces entire G each tick, dirty-check would skip everything otherwise)
+    renderCache={};
     el('h-tick').textContent='T'+G.tick;
     updateHUD(); render();
     if(G.over) showWin();
@@ -1104,12 +1102,14 @@ function finalizeDrag(ex,ey){
 // TAP LOGIC  ← core "tap cell then see actions"
 // ════════════════════════════════════
 function onTap(x,y){
+  if(!G.map||!G.map[y]) return; // guard: map not yet received
+  const myP=G.myP||1;
   const f=fog1(x,y);
   const terrain=G.map[y][x];
-  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===G.myP);
-  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===G.myP);
-  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner!==G.myP):null;
-  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner!==G.myP):null;
+  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===myP);
+  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===myP);
+  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner!==myP):null;
+  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner!==myP):null;
 
   // ── BUILD PLACEMENT PHASE ──
   if(SEL.phase==='build_place'){
