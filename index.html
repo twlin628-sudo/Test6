@@ -733,9 +733,17 @@ function render(){
 }
 
 function applyHighlights(){
-  // Only touch cells that need highlight changes
-  const selKeys=new Set(SEL.selUnits.map(u=>`${u.x},${u.y}`));
-  if(SEL.selBldg) selKeys.add(`${SEL.selBldg.x},${SEL.selBldg.y}`);
+  // Re-resolve selected unit positions from current G.units by id
+  // This fixes Guest where G.units is replaced each tick (old refs have stale coords)
+  const liveSelUnits=SEL.selUnits.map(u=>G.units.find(v=>v.id===u.id)).filter(Boolean);
+  // Also update SEL.selUnits references to live objects
+  SEL.selUnits=liveSelUnits;
+
+  const selKeys=new Set(liveSelUnits.map(u=>`${u.x},${u.y}`));
+  if(SEL.selBldg){
+    const lb=G.bldgs.find(b=>b.id===SEL.selBldg.id);
+    if(lb){ SEL.selBldg=lb; selKeys.add(`${lb.x},${lb.y}`); }
+  }
 
   Object.entries(CE).forEach(([k,d])=>{
     const wantSel=selKeys.has(k);
@@ -1248,7 +1256,9 @@ function stateStr(u){
 
 function canWalk(x,y){
   if(!inB(x,y)) return false;
-  if(G.map[y][x]===T.M) return false;
+  if(G.map[y][x]===T.M) return false;  // mountain
+  if(G.map[y][x]===T.G) return false;  // gold mine — can't walk on it
+  if(G.map[y][x]===T.W) return false;  // tree — can't walk on it
   if(G.bldgs.find(b=>b.x===x&&b.y===y)) return false;
   return true;
 }
@@ -1258,52 +1268,54 @@ function canBuild(x,y){
 }
 
 // Pathfinding step: move one cell toward (tx,ty)
-// Pass 1: avoid all other units. Pass 2: allow stepping on friendlies.
+// Pathfinding: never allow unit overlap or resource tile stepping
 function step(fx,fy,tx,ty,selfId){
   const dx=tx-fx, dy=ty-fy;
   if(!dx&&!dy) return null;
   const sx=dx>0?1:dx<0?-1:0;
   const sy=dy>0?1:dy<0?-1:0;
-  // Candidates ordered by preference
   const cands=Math.abs(dx)>=Math.abs(dy)
     ? [[fx+sx,fy],[fx,fy+sy],[fx+sx,fy+sy]]
     : [[fx,fy+sy],[fx+sx,fy],[fx+sx,fy+sy]];
-  const self=G.units.find(u=>u.id===selfId);
-  // Pass 1: no unit collision
+  // Only move to cells with no other unit and walkable terrain
   for(const [nx,ny] of cands){
     if(!canWalk(nx,ny)) continue;
-    if(!G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny)) return [nx,ny];
+    if(G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny)) continue;
+    return [nx,ny];
   }
-  // Pass 2: allow friendly overlap as last resort (avoids deadlock)
-  for(const [nx,ny] of cands){
-    if(!canWalk(nx,ny)) continue;
-    const bl=G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny);
-    if(bl&&self&&bl.owner===self.owner) return [nx,ny];
-  }
-  return null;
+  return null; // fully blocked, stay put
 }
 
 // Assign distinct destinations around (cx,cy) for multiple units
 // Units closest to target get the best spots
 function assignSpreadMove(units, cx, cy){
-  // Generate candidate cells around target in rings, sorted by distance from target
   const cands=[];
   for(let r=0;r<=4;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
-    if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue; // only ring edge
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
     const nx=cx+dx, ny=cy+dy;
     if(canWalk(nx,ny)) cands.push([nx,ny,Math.abs(dx)+Math.abs(dy)]);
   }
   cands.sort((a,b)=>a[2]-b[2]);
 
-  // Sort units by current distance to target (closest first gets best spot)
   const sorted=[...units].sort((a,b)=>
     (Math.abs(a.x-cx)+Math.abs(a.y-cy))-(Math.abs(b.x-cx)+Math.abs(b.y-cy)));
 
-  const used=new Set();
+  // Track spots claimed by this assignment AND already occupied by other units
+  const used=new Set(
+    G.units
+      .filter(u=>!units.find(v=>v.id===u.id)) // exclude the units being moved
+      .map(u=>`${u.x},${u.y}`)
+  );
+
   sorted.forEach(u=>{
     const spot=cands.find(([nx,ny])=>!used.has(`${nx},${ny}`));
-    if(spot){ used.add(`${spot[0]},${spot[1]}`); u.act='move'; u.tgt=[spot[0],spot[1]]; }
-    else { u.act='move'; u.tgt=[cx,cy]; } // fallback
+    if(spot){
+      used.add(`${spot[0]},${spot[1]}`);
+      u.act='move'; u.tgt=[spot[0],spot[1]];
+    } else {
+      // No free spot found, stay put
+      u.act=null; u.tgt=null;
+    }
   });
 }
 
