@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH</title>
+<title>WAR.SH v1.1.0</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.0</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -196,11 +196,257 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 // ════════════════════════════════════
 const MW=24, MH=20, CS=44, TICK_MS=1000;
 const T={E:0,G:1,W:2,M:3}; // terrain: Empty Gold Wood Mountain
-const IC={ // icons
-  townhall:'🏰',farm:'🌾',barracks:'⚔️',tower:'🗼',
-  worker:'👷',soldier:'🗡️',archer:'🏹',
-  e_townhall:'🏯',e_farm:'🌾',e_barracks:'🔴',e_tower:'🗼',
-  e_worker:'👺',e_soldier:'👹',e_archer:'👻',
+const IC={ // display labels only (used in info panel text)
+  townhall:'主城',farm:'農場',barracks:'兵營',tower:'箭塔',
+  worker:'Worker',soldier:'Soldier',archer:'Archer',
+  e_townhall:'敵主城',e_farm:'敵農場',e_barracks:'敵兵營',e_tower:'敵箭塔',
+  e_worker:'敵Worker',e_soldier:'敵Soldier',e_archer:'敵Archer',
+};
+
+// ── SVG Sprites (44×44 viewBox, pixel art style) ──
+function svgWrap(inner,bg=''){
+  return `<svg viewBox="0 0 44 44" width="40" height="40" xmlns="http://www.w3.org/2000/svg">${bg}${inner}</svg>`;
+}
+// My colour palette
+const MC={body:'#2aaa50',dark:'#1a6630',light:'#4dff7c',skin:'#c8a060',acc:'#ffcc44',boot:'#4a3010'};
+// Enemy colour palette
+const EC={body:'#aa2222',dark:'#7a1a1a',light:'#cc4444',skin:'#a06040',acc:'#cc4444',boot:'#2a1010'};
+
+function spriteWorker(C){
+  return svgWrap(`
+  <rect x="17" y="4" width="10" height="9" rx="2" fill="${C.skin}"/>
+  <rect x="16" y="7" width="12" height="5" rx="2" fill="${C.acc}"/>
+  <rect x="18" y="4" width="8" height="3" rx="1" fill="${C.dark}"/>
+  <rect x="18" y="10" width="3" height="2" rx="0" fill="#111"/>
+  <rect x="23" y="10" width="3" height="2" rx="0" fill="#111"/>
+  <rect x="15" y="13" width="14" height="15" rx="2" fill="${C.body}"/>
+  <rect x="13" y="13" width="5" height="11" rx="1" fill="${C.dark}"/>
+  <rect x="26" y="13" width="5" height="11" rx="1" fill="${C.dark}"/>
+  <rect x="29" y="18" width="2" height="10" rx="1" fill="#8a6030"/>
+  <rect x="27" y="16" width="6" height="3" rx="1" fill="#888"/>
+  <rect x="15" y="28" width="5" height="8" rx="1" fill="${C.dark}"/>
+  <rect x="24" y="28" width="5" height="8" rx="1" fill="${C.dark}"/>
+  <rect x="14" y="34" width="7" height="4" rx="1" fill="${C.boot}"/>
+  <rect x="23" y="34" width="7" height="4" rx="1" fill="${C.boot}"/>
+  `);
+}
+
+function spriteSoldier(C){
+  const eyeClr = C===EC ? '#ff2222' : '#111';
+  return svgWrap(`
+  <rect x="17" y="3" width="10" height="10" rx="2" fill="${C.skin}"/>
+  <rect x="15" y="2" width="14" height="7" rx="2" fill="${C.body}"/>
+  <rect x="16" y="1" width="12" height="4" rx="1" fill="${C.dark}"/>
+  <rect x="16" y="8" width="12" height="3" rx="0" fill="#111" opacity="0.7"/>
+  <rect x="18" y="9" width="3" height="2" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="23" y="9" width="3" height="2" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="14" y="13" width="16" height="17" rx="2" fill="${C.body}"/>
+  <rect x="15" y="14" width="14" height="15" rx="1" fill="${C.dark}" opacity="0.4"/>
+  <rect x="15" y="18" width="14" height="2" fill="${C.dark}"/>
+  <rect x="15" y="22" width="14" height="2" fill="${C.dark}"/>
+  <rect x="7" y="13" width="7" height="12" rx="2" fill="${C.acc}"/>
+  <rect x="8" y="14" width="5" height="10" rx="1" fill="${C===EC?'#7a1a1a':'#aa8822'}"/>
+  <rect x="9" y="18" width="3" height="2" rx="0" fill="${C.acc}"/>
+  <rect x="30" y="10" width="3" height="16" rx="1" fill="#aaa"/>
+  <rect x="26" y="14" width="8" height="3" rx="0" fill="#888"/>
+  <rect x="30" y="24" width="3" height="6" rx="1" fill="#8a6030"/>
+  <rect x="15" y="30" width="6" height="8" rx="1" fill="${C.body}"/>
+  <rect x="23" y="30" width="6" height="8" rx="1" fill="${C.body}"/>
+  <rect x="14" y="36" width="8" height="4" rx="1" fill="${C.boot}"/>
+  <rect x="22" y="36" width="8" height="4" rx="1" fill="${C.boot}"/>
+  `);
+}
+
+function spriteArcher(C){
+  const eyeClr = C===EC ? '#ff2222' : '#111';
+  return svgWrap(`
+  <rect x="18" y="5" width="9" height="10" rx="2" fill="${C.skin}"/>
+  <rect x="16" y="2" width="13" height="9" rx="4" fill="${C.body}"/>
+  <rect x="17" y="3" width="11" height="7" rx="3" fill="${C.dark}" opacity="0.5"/>
+  <rect x="19" y="11" width="3" height="2" rx="1" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="23" y="11" width="3" height="2" rx="1" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="16" y="15" width="14" height="17" rx="2" fill="${C.dark}"/>
+  <rect x="30" y="14" width="4" height="12" rx="2" fill="#8a6030"/>
+  <rect x="31" y="12" width="2" height="3" rx="0" fill="${C.acc}"/>
+  <rect x="33" y="11" width="2" height="4" rx="0" fill="${C.acc}"/>
+  <path d="M 8 8 Q 4 22 8 36" stroke="#8a6030" stroke-width="3" fill="none"/>
+  <line x1="8" y1="9" x2="8" y2="35" stroke="#c8c0a0" stroke-width="1"/>
+  <line x1="8" y1="22" x2="26" y2="18" stroke="#c8c0a0" stroke-width="1.5"/>
+  <polygon points="26,18 22,15 22,21" fill="${C===EC?'#cc4444':'#aaa'}"/>
+  <rect x="16" y="32" width="6" height="8" rx="1" fill="${C.dark}"/>
+  <rect x="24" y="32" width="6" height="8" rx="1" fill="${C.dark}"/>
+  `);
+}
+
+function spriteTownhall(C){
+  const flag = C===MC ? '#4dff7c' : '#cc4444';
+  return svgWrap(`
+  <rect x="6" y="26" width="32" height="14" rx="1" fill="${C.dark}"/>
+  <rect x="8" y="24" width="28" height="14" rx="1" fill="${C.body}"/>
+  <rect x="17" y="28" width="10" height="10" rx="1" fill="#111"/>
+  <rect x="18" y="29" width="4" height="8" rx="0" fill="#0a0f0a" opacity="0.8"/>
+  <rect x="22" y="29" width="4" height="8" rx="0" fill="#0a0f0a" opacity="0.8"/>
+  <rect x="6" y="12" width="9" height="16" rx="1" fill="${C.body}"/>
+  <rect x="29" y="12" width="9" height="16" rx="1" fill="${C.body}"/>
+  <rect x="5" y="8" width="5" height="6" rx="1" fill="${C.dark}"/>
+  <rect x="11" y="8" width="5" height="6" rx="1" fill="${C.dark}"/>
+  <rect x="29" y="8" width="5" height="6" rx="1" fill="${C.dark}"/>
+  <rect x="35" y="8" width="5" height="6" rx="1" fill="${C.dark}"/>
+  <rect x="15" y="6" width="14" height="20" rx="1" fill="${C.dark}"/>
+  <rect x="16" y="7" width="12" height="18" rx="1" fill="${C.body}"/>
+  <rect x="19" y="10" width="6" height="7" rx="1" fill="#111"/>
+  <rect x="20" y="11" width="2" height="5" rx="0" fill="${flag}" opacity="0.4"/>
+  <rect x="22" y="11" width="2" height="5" rx="0" fill="${flag}" opacity="0.4"/>
+  <rect x="21" y="2" width="2" height="6" fill="${flag}"/>
+  <polygon points="23,2 30,5 23,8" fill="${flag}"/>
+  ${C===EC?'<circle cx="27" cy="5" r="2" fill="#fff" opacity="0.7"/><rect cx="26" cy="7" width="2" height="1" fill="#7a1a1a"/>':''}
+  `);
+}
+
+function spriteFarm(C){
+  const soilC = C===MC ? '#6a4020' : '#4a2010';
+  const wheatC = C===MC ? '#ffcc44' : '#8a4020';
+  return svgWrap(`
+  <rect x="4" y="28" width="36" height="12" rx="2" fill="${soilC}"/>
+  <rect x="6" y="26" width="32" height="12" rx="2" fill="${C===MC?'#8a6030':'#6a3020'}"/>
+  <line x1="8" y1="30" x2="36" y2="30" stroke="${soilC}" stroke-width="1.5"/>
+  <line x1="8" y1="34" x2="36" y2="34" stroke="${soilC}" stroke-width="1.5"/>
+  <rect x="8" y="14" width="3" height="12" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
+  <ellipse cx="10" cy="12" rx="4" ry="6" fill="${wheatC}"/>
+  <rect x="15" y="10" width="3" height="16" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
+  <ellipse cx="17" cy="8" rx="4" ry="6" fill="${wheatC}"/>
+  <rect x="22" y="14" width="3" height="12" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
+  <ellipse cx="24" cy="12" rx="4" ry="6" fill="${wheatC}"/>
+  <rect x="29" y="10" width="3" height="16" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
+  <ellipse cx="31" cy="8" rx="4" ry="6" fill="${wheatC}"/>
+  <rect x="4" y="22" width="36" height="3" rx="0" fill="${C===MC?'#8a6030':'#6a3010'}"/>
+  <rect x="5"  y="18" width="3" height="8" rx="1" fill="${soilC}"/>
+  <rect x="13" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
+  <rect x="27" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
+  <rect x="36" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
+  `);
+}
+
+function spriteBarracks(C){
+  const flag = C===MC ? '#4dff7c' : '#ff4444';
+  return svgWrap(`
+  <rect x="5" y="22" width="34" height="18" rx="1" fill="${C.dark}"/>
+  <rect x="7" y="20" width="30" height="18" rx="1" fill="${C.body}"/>
+  <polygon points="4,22 22,6 40,22" fill="${C.dark}"/>
+  <polygon points="6,22 22,8 38,22" fill="${C.body}" opacity="0.5"/>
+  <rect x="17" y="26" width="10" height="14" rx="1" fill="#111"/>
+  <rect x="18" y="27" width="4" height="12" rx="0" fill="#0a0f0a"/>
+  <rect x="22" y="27" width="4" height="12" rx="0" fill="#0a0f0a"/>
+  <rect x="8" y="24" width="7" height="7" rx="1" fill="#111"/>
+  <rect x="29" y="24" width="7" height="7" rx="1" fill="#111"/>
+  <line x1="18" y1="12" x2="22" y2="18" stroke="${flag}" stroke-width="2"/>
+  <line x1="22" y1="12" x2="18" y2="18" stroke="${flag}" stroke-width="2"/>
+  <circle cx="20" cy="15" r="2" fill="${flag}" opacity="0.6"/>
+  `);
+}
+
+function spriteTower(C){
+  const arrowC = C===MC ? '#4dff7c' : '#ff4444';
+  return svgWrap(`
+  <rect x="13" y="32" width="18" height="10" rx="1" fill="${C.dark}"/>
+  <rect x="15" y="16" width="14" height="20" rx="1" fill="${C.body}"/>
+  <rect x="16" y="17" width="12" height="18" rx="1" fill="${C.dark}" opacity="0.4"/>
+  <rect x="19" y="20" width="6" height="10" rx="0" fill="#111"/>
+  <rect x="21" y="16" width="2" height="14" rx="0" fill="#111"/>
+  <rect x="13" y="8" width="5" height="9" rx="1" fill="${C.body}"/>
+  <rect x="19" y="8" width="4" height="9" rx="1" fill="${C.body}"/>
+  <rect x="24" y="8" width="5" height="9" rx="1" fill="${C.body}"/>
+  ${C===EC?`
+  <polygon points="15,8 17,4 19,8" fill="${C.light}"/>
+  <polygon points="22,8 24,4 26,8" fill="${C.light}"/>
+  <polygon points="26,8 28,4 30,8" fill="${C.light}"/>
+  `:''}
+  <line x1="22" y1="23" x2="36" y2="14" stroke="${arrowC}" stroke-width="1.5" stroke-dasharray="2,2"/>
+  <polygon points="36,14 32,13 33,17" fill="${arrowC}"/>
+  `);
+}
+
+// Terrain SVGs
+function spriteGold(){
+  return svgWrap(`
+  <ellipse cx="22" cy="30" rx="14" ry="9" fill="#555"/>
+  <ellipse cx="22" cy="28" rx="13" ry="8" fill="#777"/>
+  <ellipse cx="19" cy="26" rx="6" ry="4" fill="#ffcc44"/>
+  <ellipse cx="26" cy="29" rx="4" ry="3" fill="#ffcc44"/>
+  <ellipse cx="21" cy="31" rx="3" ry="2" fill="#eebb33"/>
+  <line x1="10" y1="16" x2="13" y2="12" stroke="#ffcc44" stroke-width="1.5"/>
+  <line x1="11" y1="14" x2="7" y2="14" stroke="#ffcc44" stroke-width="1.5"/>
+  <circle cx="32" cy="18" r="2" fill="#ffcc44"/>
+  <line x1="32" y1="14" x2="32" y2="10" stroke="#ffcc44" stroke-width="1"/>
+  <line x1="28" y1="14" x2="36" y2="14" stroke="#ffcc44" stroke-width="1"/>
+  <line x1="16" y1="22" x2="26" y2="30" stroke="#333" stroke-width="2"/>
+  <rect x="10" y="17" width="5" height="3" rx="1" fill="#888" transform="rotate(-40,13,18)"/>
+  `,'');
+}
+
+function spriteTree(){
+  return svgWrap(`
+  <rect x="19" y="32" width="6" height="10" rx="1" fill="#8a6030"/>
+  <rect x="20" y="34" width="3" height="8" rx="0" fill="#6a4020"/>
+  <polygon points="22,4 4,28 40,28" fill="#1a6020"/>
+  <polygon points="22,2 6,22 38,22" fill="#2a8030"/>
+  <polygon points="22,0 8,16 36,16" fill="#3aaa40"/>
+  <polygon points="22,2 16,12 28,12" fill="#4dff7c" opacity="0.25"/>
+  <line x1="19" y1="40" x2="11" y2="44" stroke="#6a4020" stroke-width="2"/>
+  <line x1="25" y1="40" x2="33" y2="44" stroke="#6a4020" stroke-width="2"/>
+  `,'');
+}
+
+function spriteMountain(){
+  return svgWrap(`
+  <polygon points="22,4 2,40 42,40" fill="#334455"/>
+  <polygon points="12,18 0,40 28,40" fill="#445566"/>
+  <polygon points="22,4 10,18 34,18" fill="#aabbcc"/>
+  <polygon points="22,4 18,12 26,12" fill="#ddeeff"/>
+  <polygon points="12,18 6,28 20,28" fill="#aabbcc" opacity="0.6"/>
+  <line x1="8" y1="28" x2="14" y2="38" stroke="#223344" stroke-width="1"/>
+  <line x1="28" y1="24" x2="36" y2="36" stroke="#223344" stroke-width="1"/>
+  `,'');
+}
+
+function spriteConstruct(){
+  return svgWrap(`
+  <rect x="8" y="4" width="3" height="36" rx="1" fill="#8a6030"/>
+  <rect x="33" y="4" width="3" height="36" rx="1" fill="#8a6030"/>
+  <rect x="8" y="18" width="28" height="3" rx="0" fill="#8a6030"/>
+  <rect x="8" y="30" width="28" height="3" rx="0" fill="#8a6030"/>
+  <rect x="12" y="22" width="20" height="14" rx="1" fill="#2aaa50" opacity="0.4"/>
+  <rect x="13" y="23" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
+  <rect x="23" y="23" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
+  <rect x="17" y="29" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
+  <rect x="6" y="2" width="32" height="8" rx="2" fill="#ffcc44"/>
+  <line x1="6" y1="2" x2="14" y2="10" stroke="#0b0d0f" stroke-width="3"/>
+  <line x1="14" y1="2" x2="22" y2="10" stroke="#0b0d0f" stroke-width="3"/>
+  <line x1="22" y1="2" x2="30" y2="10" stroke="#0b0d0f" stroke-width="3"/>
+  <line x1="30" y1="2" x2="38" y2="10" stroke="#0b0d0f" stroke-width="3"/>
+  `,'');
+}
+
+// Sprite lookup table
+const SP={
+  worker:    ()=>spriteWorker(MC),
+  soldier:   ()=>spriteSoldier(MC),
+  archer:    ()=>spriteArcher(MC),
+  townhall:  ()=>spriteTownhall(MC),
+  farm:      ()=>spriteFarm(MC),
+  barracks:  ()=>spriteBarracks(MC),
+  tower:     ()=>spriteTower(MC),
+  e_worker:  ()=>spriteWorker(EC),
+  e_soldier: ()=>spriteSoldier(EC),
+  e_archer:  ()=>spriteArcher(EC),
+  e_townhall:()=>spriteTownhall(EC),
+  e_farm:    ()=>spriteFarm(EC),
+  e_barracks:()=>spriteBarracks(EC),
+  e_tower:   ()=>spriteTower(EC),
+  gold:      ()=>spriteGold(),
+  tree:      ()=>spriteTree(),
+  mountain:  ()=>spriteMountain(),
+  construct: ()=>spriteConstruct(),
 };
 const BD={ // building defs
   townhall:{cost:{g:0,w:0},  hp:300,food:10,bt:0 },
@@ -658,7 +904,7 @@ function buildDOM(){
     const d=document.createElement('div');
     d.className='cell fog'; d.dataset.x=x; d.dataset.y=y;
     d.style.left=(x*CS)+'px'; d.style.top=(y*CS)+'px';
-    d.innerHTML=`<span class="clbl">${cs(x,y)}</span><span class="ci"></span>`+
+    d.innerHTML=`<span class="clbl">${cs(x,y)}</span><span class="ci" style="position:relative;display:flex;align-items:center;justify-content:center;width:40px;height:40px;"></span>`+
                 `<div class="hpb" style="display:none"><div class="hpf my"></div></div>`;
     CE[`${x},${y}`]=d;
     canvas.appendChild(d);
@@ -685,15 +931,16 @@ function render(){
     const d=CE[`${x},${y}`]; if(!d) continue;
     const f=fog1(x,y);
 
-    // compute what this cell should show
+    // compute sprite key for this cell
     const t=G.map[y]?.[x]??T.E;
-    let icon=f==='h'?'':(t===T.G?'💰':t===T.W?'🌲':t===T.M?'🏔️':'');
+    let sprKey=f==='h'?'':(t===T.G?'gold':t===T.W?'tree':t===T.M?'mountain':'');
     let hp=0,mhp=1,isEn=false;
+    let multi=false;
 
     if(f!=='h'){
       const b=bAt[`${x},${y}`];
       if(b&&(f==='v'||b.owner===myP)){
-        icon=b.uc?'🏗️':(b.owner!==myP?(IC['e_'+b.type]||'🏯'):(IC[b.type]||'🏠'));
+        sprKey=b.uc?'construct':(b.owner!==myP?'e_'+b.type:b.type);
         hp=b.hp;mhp=b.mhp;isEn=b.owner!==myP;
       }
       const us=uAt[`${x},${y}`];
@@ -701,27 +948,35 @@ function render(){
         const myU=us.find(u=>u.owner===myP), enU=us.find(u=>u.owner!==myP);
         const show=myU||enU;
         if(show){
-          icon=(show.owner!==myP?(IC['e_'+show.type]||'👾'):(IC[show.type]||'🧍'));
+          sprKey=(show.owner!==myP?'e_'+show.type:show.type);
           hp=show.hp;mhp=show.mhp;isEn=show.owner!==myP;
         }
-        if(us.length>1) icon+='⁺';
+        if(us.length>1) multi=true;
       }
     }
 
-    const key=cellKey(x,y,f,icon,hp,mhp,isEn);
-    if(renderCache[`${x},${y}`]===key) continue; // no change, skip
-    renderCache[`${x},${y}`]=key;
+    const cacheKey=`${f}|${sprKey}|${hp}|${mhp}|${isEn?1:0}|${multi?1:0}`;
+    if(renderCache[`${x},${y}`]===cacheKey) continue;
+    renderCache[`${x},${y}`]=cacheKey;
 
-    // Apply to DOM
     const fogCls=f==='h'?'fog':f==='s'?'seen':'vis';
-    // preserve highlight classes
     const hlCls=['h-sel','h-build'].filter(c=>d.classList.contains(c));
     d.className='cell '+fogCls+(hlCls.length?' '+hlCls.join(' '):'');
 
     const ci=d.querySelector('.ci');
     const hpb=d.querySelector('.hpb');
     const hpf=d.querySelector('.hpf');
-    if(ci) ci.textContent=icon;
+
+    // render sprite or empty
+    if(ci){
+      if(sprKey && SP[sprKey]){
+        ci.innerHTML=SP[sprKey]()+( multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'');
+        ci.style.fontSize='';
+      } else {
+        ci.innerHTML='';
+      }
+    }
+
     if(hp>0&&hpb&&hpf){
       hpb.style.display='block';
       const pct=Math.max(0,hp/mhp*100);
@@ -921,12 +1176,12 @@ function onTap(x,y){
   // Info-only taps
   if(enUnit||enBldg){
     const e=enUnit||enBldg;
-    setInfo(IC['e_'+e.type]||'👾',`敵方 ${e.type}`,`HP ${e.hp}/${e.mhp}`,'');
+    setInfo('👁️',`敵方 ${IC['e_'+e.type]||e.type}`,`HP ${e.hp}/${e.mhp}`,'');
     setActions(`<span class="hint">先選我方士兵，再點此敵人攻擊</span>`); return;
   }
-  if(terrain===T.G){setInfo('💰','金礦','可採集','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
-  if(terrain===T.W){setInfo('🌲','樹林','可砍伐','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
-  if(terrain===T.M){setInfo('🏔️','山地','不可通行','');setActions('');return;}
+  if(terrain===T.G){setInfo('💎','金礦','可採集','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
+  if(terrain===T.W){setInfo('🌳','樹林','可砍伐','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
+  if(terrain===T.M){setInfo('⛰️','山地','不可通行','');setActions('');return;}
   if(f==='h'){setInfo('❓','未探索','','');setActions('');return;}
 
   resetSel();
@@ -945,15 +1200,18 @@ function refreshSelPanel(){
 // ════════════════════════════════════
 function selectUnit(u){
   SEL.phase='sel'; SEL.selUnits=[u]; SEL.selBldg=null;
-  setInfo(IC[u.type], u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
+  const myP=G.myP||1;
+  const label=u.owner!==myP?(IC['e_'+u.type]||'敵單位'):(IC[u.type]||u.type);
+  setInfo('⚔️', label, `HP ${u.hp}/${u.mhp}`, stateStr(u));
   showUnitPanel(u);
   render();
 }
 
 function selectBldg(b){
   SEL.phase='sel'; SEL.selUnits=[]; SEL.selBldg=b;
-  setInfo(b.uc?'🏗️':(IC[b.type]||'🏠'), b.type+(b.uc?' (建造中)':''),
-    `HP ${b.hp}/${b.mhp}`, b.tq.length?`隊列:${b.tq.length}`:'');
+  const myP=G.myP||1;
+  const label=b.owner!==myP?(IC['e_'+b.type]||'敵建築'):(IC[b.type]||b.type);
+  setInfo('🏛️', label+(b.uc?' (建造中)':''), `HP ${b.hp}/${b.mhp}`, b.tq?.length?`隊列:${b.tq.length}`:'');
   showBldgPanel(b);
   render();
 }
@@ -970,7 +1228,7 @@ function showUnitPanel(u){
   }
   html+=`<button class="ab" onclick="resetSel()">取消選擇</button>`;
   setActions(html);
-  setInfo(IC[u.type], u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
+  setInfo('⚔️', IC[u.type]||u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
 }
 
 function showBldgPanel(b){
