@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.1.2</title>
+<title>WAR.SH v1.1.3</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.2</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.3</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -1003,7 +1003,9 @@ function applyHighlights(){
     if(wantSel&&!hasSel) c.el.classList.add('h-sel');
     else if(!wantSel&&hasSel) c.el.classList.remove('h-sel');
     const [x,y]=k.split(',').map(Number);
-    const wantBuild=SEL.phase==='build_place'&&canBuild(x,y)&&fog1(x,y)!=='h';
+    const worker=SEL.phase==='build_place'?SEL.selUnits.find(u=>u.type==='worker'):null;
+    const wantBuild=worker&&canBuild(x,y)&&fog1(x,y)!=='h'
+      &&Math.abs(x-worker.x)<=2&&Math.abs(y-worker.y)<=2;
     const hasBuild=c.el.classList.contains('h-build');
     if(wantBuild&&!hasBuild) c.el.classList.add('h-build');
     else if(!wantBuild&&hasBuild) c.el.classList.remove('h-build');
@@ -1124,6 +1126,10 @@ function onTap(x,y){
   if(SEL.selUnits.length>0){
     const units=SEL.selUnits;
 
+    // Tap own unit → switch selection (check BEFORE move so clicking another unit selects it)
+    if(myUnit){ selectUnit(myUnit); return; }
+    if(myBldg){ selectBldg(myBldg); return; }
+
     // Tap enemy → attack (keep selection)
     if(enUnit||enBldg){
       const tgt=enUnit||enBldg;
@@ -1158,10 +1164,6 @@ function onTap(x,y){
       glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
       refreshSelPanel(); return;
     }
-
-    // Tap own unit → switch selection
-    if(myUnit){ selectUnit(myUnit); return; }
-    if(myBldg){ selectBldg(myBldg); return; }
 
     // Tap nothing useful → deselect
     resetSel(); return;
@@ -1270,6 +1272,10 @@ function execBuild(x,y){
   if(!canBuild(x,y)){glog('❌ 位置被佔用');return;}
   const worker=SEL.selUnits.find(u=>u.type==='worker');
   if(!worker){glog('❌ 需要Worker');return;}
+  // 5x5 range: distance ≤ 2 from worker
+  if(Math.abs(x-worker.x)>2||Math.abs(y-worker.y)>2){
+    glog('❌ 超出建造範圍（Worker 5×5 格內）');return;
+  }
   multiBuild(SEL.selUnits, type, [x,y]);
 }
 
