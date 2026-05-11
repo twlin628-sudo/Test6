@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.1.3</title>
+<title>WAR.SH v1.2.0</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.1.3</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.2.0</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -452,15 +452,15 @@ const SP={
 const SPC={}; // Sprite Pre-generated Cache
 Object.keys(SP).forEach(k=>{ SPC[k]=SP[k](); });
 const BD={ // building defs
-  townhall:{cost:{g:0,w:0},  hp:300,food:10,bt:0 },
-  farm:    {cost:{g:60,w:30},hp:80, food:5, bt:8 },
-  barracks:{cost:{g:120,w:50},hp:120,food:0,bt:12},
-  tower:   {cost:{g:100,w:80},hp:150,food:0,bt:15,atk:6,rng:3},
+  townhall:{cost:{g:0,w:0},   hp:300,food:10,bt:0 },
+  farm:    {cost:{g:60,w:30}, hp:80, food:5, bt:8 },
+  barracks:{cost:{g:120,w:50},hp:120,food:0, bt:12},
+  tower:   {cost:{g:150,w:100},hp:120,food:0,bt:18,atk:5,rng:3},
 };
-const UD={ // unit defs
-  worker: {cost:{g:50}, hp:30, atk:2, rng:1,vis:3,food:0},
-  soldier:{cost:{g:80}, hp:80, atk:8, rng:1,vis:2,food:1},
-  archer: {cost:{g:100},hp:50, atk:5, rng:3,vis:3,food:1},
+const UD={ // unit defs — def: damage reduction per hit (min 1 dmg always)
+  worker: {cost:{g:50}, hp:30, atk:2, def:0, rng:1,vis:3,food:0},
+  soldier:{cost:{g:90}, hp:90, atk:8, def:3, rng:1,vis:2,food:1},
+  archer: {cost:{g:100},hp:50, atk:5, def:1, rng:3,vis:3,food:1},
 };
 
 // ════════════════════════════════════
@@ -857,12 +857,12 @@ function addBldg(type,owner,x,y,underConst=false){
 
 function addUnit(type,owner,x,y){
   const d=UD[type];
-  const pk=type[0]; // w/s/a
+  const pk=type[0];
   G.uc[owner][pk]++;
   const id=pk+G.uc[owner][pk]+'p'+owner;
   G.units.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,
-    atk:d.atk,rng:d.rng,vis:d.vis,food:d.food,
-    act:null,tgt:null}); // act: null|'move'|'harvest'|'attack'
+    atk:d.atk,def:d.def||0,rng:d.rng,vis:d.vis,food:d.food,
+    act:null,tgt:null});
   G.res[owner].food+=d.food;
   return id;
 }
@@ -1202,7 +1202,7 @@ function selectUnit(u){
   SEL.phase='sel'; SEL.selUnits=[u]; SEL.selBldg=null;
   const myP=G.myP||1;
   const label=u.owner!==myP?(IC['e_'+u.type]||'敵單位'):(IC[u.type]||u.type);
-  setInfo('⚔️', label, `HP ${u.hp}/${u.mhp}`, stateStr(u));
+  setInfo('⚔️', label, `HP ${u.hp}/${u.mhp}  DEF ${u.def||0}`, stateStr(u));
   showUnitPanel(u);
   render();
 }
@@ -1228,7 +1228,7 @@ function showUnitPanel(u){
   }
   html+=`<button class="ab" onclick="resetSel()">取消選擇</button>`;
   setActions(html);
-  setInfo('⚔️', IC[u.type]||u.type, `HP ${u.hp}/${u.mhp}`, stateStr(u));
+  setInfo('⚔️', IC[u.type]||u.type, `HP ${u.hp}/${u.mhp}  DEF ${u.def||0}`, stateStr(u));
 }
 
 function showBldgPanel(b){
@@ -1361,10 +1361,12 @@ function tick(){
     }
     else if(u.act==='attack'&&u.tgt){
       const tgt=byId(u.tgt);
-      if(!tgt){u.act=null;u.tgt=null;return;} // target dead, go idle → auto-attack will pick next
+      if(!tgt){u.act=null;u.tgt=null;return;}
       const dist=Math.abs(u.x-tgt.x)+Math.abs(u.y-tgt.y);
       if(dist<=u.rng){
-        tgt.hp-=u.atk;
+        // Apply target's defense: damage = max(1, atk - def)
+        const dmg=Math.max(1, u.atk - (tgt.def||0));
+        tgt.hp-=dmg;
         if(G.tick%3===0) hitFx(tgt.x,tgt.y);
         if(tgt.hp<=0) dead.add(tgt.id);
       } else {
@@ -1374,9 +1376,8 @@ function tick(){
     }
     else if(!u.act && (u.type==='soldier'||u.type==='archer')){
       // ── AUTO-ATTACK: scan vision for nearest enemy ──
-      const enemy = 3 - u.owner; // opponent player number
+      const enemy = 3 - u.owner;
       let nearest=null, nearestDist=999;
-      // Check all visible enemies (units + buildings) within vision
       const targets=[
         ...G.units.filter(e=>e.owner===enemy),
         ...G.bldgs.filter(e=>e.owner===enemy),
@@ -1390,13 +1391,14 @@ function tick(){
     }
   });
 
-  // Tower auto-attack
+  // Tower auto-attack (tower has no def value, units do)
   G.bldgs.filter(b=>b.type==='tower'&&!b.uc).forEach(tw=>{
     G.units.filter(u=>u.owner!==tw.owner
       && Math.abs(u.x-tw.x)+Math.abs(u.y-tw.y)<=BD.tower.rng
       && G.fog[tw.owner-1][u.y][u.x]==='v')
     .slice(0,1).forEach(u=>{
-      u.hp-=BD.tower.atk;
+      const dmg=Math.max(1, BD.tower.atk - (u.def||0));
+      u.hp-=dmg;
       hitFx(u.x,u.y);
       if(u.hp<=0) dead.add(u.id);
     });
