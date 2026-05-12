@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.2.0</title>
+<title>WAR.SH v1.2.1</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.2.0</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.2.1</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -668,14 +668,23 @@ function startGuest(){
   glog('✅ Guest 已連線，等待遊戲資料...');
 }
 
+// Compact field lists for serialization (order matters)
+const BFLDS=['id','type','owner','x','y','hp','mhp','bp','bt','uc','tq','tp'];
+const UFLDS=['id','type','owner','x','y','hp','mhp','atk','def','rng','vis','food','act','tgt'];
+
+function packArr(obj,flds){ return flds.map(f=>obj[f]); }
+function unpackArr(arr,flds){ const o={}; flds.forEach((f,i)=>o[f]=arr[i]); return o; }
+
 function sendToGuest(){
   sendRaw({
-    t:'state',
-    tick:G.tick, over:G.over, winner:G.winner,
-    res:G.res, map:G.map, fog:G.fog[1],
-    bldgs:G.bldgs.map(b=>({...b})),
-    units:G.units.map(u=>({...u})),
-    uc:G.uc, bc:G.bc,
+    t:'s',
+    k:G.tick, o:G.over, w:G.winner,
+    r:G.res,
+    m:G.map,  // terrain (static after first send, but small enough to always send)
+    f:G.fog[1],
+    b:G.bldgs.map(b=>packArr(b,BFLDS)),
+    u:G.units.map(u=>packArr(u,UFLDS)),
+    c:G.uc, d:G.bc,
   });
 }
 
@@ -685,18 +694,42 @@ function sendCmd(cmd){
 
 function onPeerMsg(msg){
   if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
-  if(msg.t==='state'){
-    G.tick=msg.tick; G.over=msg.over; G.winner=msg.winner;
-    G.res=msg.res;
-    // Only update map if host sent it (first packet only)
-    if(msg.map) G.map=msg.map;
-    G.fog=[[],msg.fog]; // index 1 = P2 fog
-    G.bldgs=msg.bldgs; G.units=msg.units;
-    G.uc=msg.uc; G.bc=msg.bc;
+  if(msg.t==='s'){
+    // Unpack compact format
+    const prevUnits=G.units;
+    const prevBldgs=G.bldgs;
+
+    G.tick=msg.k; G.over=msg.o; G.winner=msg.w;
+    G.res=msg.r;
+    if(msg.m) G.map=msg.m;
+    G.fog=[[],msg.f];
+    G.bldgs=msg.b.map(a=>unpackArr(a,BFLDS));
+    G.units=msg.u.map(a=>unpackArr(a,UFLDS));
+    G.uc=msg.c; G.bc=msg.d;
     G.myP=2;
-    // Clear render cache so all changed cells re-draw
-    // (Guest replaces entire G each tick, dirty-check would skip everything otherwise)
-    renderCache={};
+
+    // Smart cache invalidation: only clear cells that changed
+    // (positions of moved units, dead units, fog changes)
+    const changedCells=new Set();
+
+    // Cells where units were last tick
+    prevUnits.forEach(u=>changedCells.add(`${u.x},${u.y}`));
+    // Cells where units are now
+    G.units.forEach(u=>changedCells.add(`${u.x},${u.y}`));
+    // Cells where buildings were/are (hp changes)
+    prevBldgs.forEach(b=>changedCells.add(`${b.x},${b.y}`));
+    G.bldgs.forEach(b=>changedCells.add(`${b.x},${b.y}`));
+    // Clear cache only for changed cells + fog boundary changes
+    // For fog: clear all vis/seen boundary cells (approximate, fast)
+    changedCells.forEach(k=>{ delete renderCache[k]; });
+    // Also clear fog: any cell whose fog state may have changed
+    // (unit movement changes fog, so clear cells near moved units)
+    G.units.forEach(u=>{
+      for(let dy=-u.vis-1;dy<=u.vis+1;dy++) for(let dx=-u.vis-1;dx<=u.vis+1;dx++){
+        delete renderCache[`${u.x+dx},${u.y+dy}`];
+      }
+    });
+
     el('h-tick').textContent='T'+G.tick;
     updateHUD(); render();
     if(G.over) showWin();
@@ -901,6 +934,7 @@ function buildDOM(){
   canvas.style.width=(MW*CS)+'px';
   canvas.style.height=(MH*CS)+'px';
   CE={}; renderCache={};
+  prevSelKeys=new Set(); prevBuildKeys=new Set();
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const d=document.createElement('div');
     d.className='cell fog'; d.dataset.x=x; d.dataset.y=y;
@@ -989,7 +1023,11 @@ function render(){
   applyHighlights();
 }
 
+let prevSelKeys=new Set();
+let prevBuildKeys=new Set();
+
 function applyHighlights(){
+  // Re-resolve selected unit positions from live G.units
   const liveSelUnits=SEL.selUnits.map(u=>G.units.find(v=>v.id===u.id)).filter(Boolean);
   SEL.selUnits=liveSelUnits;
   const selKeys=new Set(liveSelUnits.map(u=>`${u.x},${u.y}`));
@@ -997,19 +1035,23 @@ function applyHighlights(){
     const lb=G.bldgs.find(b=>b.id===SEL.selBldg.id);
     if(lb){ SEL.selBldg=lb; selKeys.add(`${lb.x},${lb.y}`); }
   }
-  Object.entries(CE).forEach(([k,c])=>{
-    const wantSel=selKeys.has(k);
-    const hasSel=c.el.classList.contains('h-sel');
-    if(wantSel&&!hasSel) c.el.classList.add('h-sel');
-    else if(!wantSel&&hasSel) c.el.classList.remove('h-sel');
-    const [x,y]=k.split(',').map(Number);
-    const worker=SEL.phase==='build_place'?SEL.selUnits.find(u=>u.type==='worker'):null;
-    const wantBuild=worker&&canBuild(x,y)&&fog1(x,y)!=='h'
-      &&Math.abs(x-worker.x)<=2&&Math.abs(y-worker.y)<=2;
-    const hasBuild=c.el.classList.contains('h-build');
-    if(wantBuild&&!hasBuild) c.el.classList.add('h-build');
-    else if(!wantBuild&&hasBuild) c.el.classList.remove('h-build');
-  });
+  // Only update cells whose sel state changed
+  prevSelKeys.forEach(k=>{ if(!selKeys.has(k)) CE[k]?.el.classList.remove('h-sel'); });
+  selKeys.forEach(k=>{ if(!prevSelKeys.has(k)) CE[k]?.el.classList.add('h-sel'); });
+  prevSelKeys=selKeys;
+
+  // Build highlights: only 5x5 around worker
+  const worker=SEL.phase==='build_place'?SEL.selUnits.find(u=>u.type==='worker'):null;
+  const buildKeys=new Set();
+  if(worker){
+    for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++){
+      const x=worker.x+dx, y=worker.y+dy;
+      if(canBuild(x,y)&&fog1(x,y)!=='h') buildKeys.add(`${x},${y}`);
+    }
+  }
+  prevBuildKeys.forEach(k=>{ if(!buildKeys.has(k)) CE[k]?.el.classList.remove('h-build'); });
+  buildKeys.forEach(k=>{ if(!prevBuildKeys.has(k)) CE[k]?.el.classList.add('h-build'); });
+  prevBuildKeys=buildKeys;
 }
 
 // ════════════════════════════════════
@@ -1303,6 +1345,10 @@ function toggleBoxMode(){
 }
 
 function resetSel(){
+  // Clear highlight tracking before resetting selection
+  prevSelKeys.forEach(k=>CE[k]?.el.classList.remove('h-sel'));
+  prevBuildKeys.forEach(k=>CE[k]?.el.classList.remove('h-build'));
+  prevSelKeys=new Set(); prevBuildKeys=new Set();
   SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
   setBoxMode(false);
   setInfo('🗺️','點選單位或建築','','');
