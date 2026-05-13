@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.2.1</title>
+<title>WAR.SH v1.3.0</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.2.1</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.3.0</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -192,33 +192,44 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <script>
 'use strict';
 // ════════════════════════════════════
-// CONSTANTS
+// WAR.SH v1.3.0 — Rewritten Architecture
 // ════════════════════════════════════
-const MW=24, MH=20, CS=44, TICK_MS=1000;
-const T={E:0,G:1,W:2,M:3}; // terrain: Empty Gold Wood Mountain
-const IC={ // display labels only (used in info panel text)
+const MW=24,MH=20,CS=44,TICK_MS=1000;
+const T={E:0,G:1,W:2,M:3};
+
+// Display labels
+const IC={
   townhall:'主城',farm:'農場',barracks:'兵營',tower:'箭塔',
   worker:'Worker',soldier:'Soldier',archer:'Archer',
   e_townhall:'敵主城',e_farm:'敵農場',e_barracks:'敵兵營',e_tower:'敵箭塔',
   e_worker:'敵Worker',e_soldier:'敵Soldier',e_archer:'敵Archer',
 };
 
-// ── SVG Sprites (44×44 viewBox, pixel art style) ──
-function svgWrap(inner,bg=''){
-  return `<svg viewBox="0 0 44 44" width="40" height="40" xmlns="http://www.w3.org/2000/svg">${bg}${inner}</svg>`;
-}
-// My colour palette
-const MC={body:'#2aaa50',dark:'#1a6630',light:'#4dff7c',skin:'#c8a060',acc:'#ffcc44',boot:'#4a3010'};
-// Enemy colour palette
-const EC={body:'#aa2222',dark:'#7a1a1a',light:'#cc4444',skin:'#a06040',acc:'#cc4444',boot:'#2a1010'};
+// Game balance
+const BD={
+  townhall:{cost:{g:0,w:0},   hp:300,food:10,bt:0},
+  farm:    {cost:{g:60,w:30}, hp:80, food:5, bt:8},
+  barracks:{cost:{g:120,w:50},hp:120,food:0, bt:12},
+  tower:   {cost:{g:150,w:100},hp:120,food:0,bt:18,atk:5,rng:3},
+};
+const UD={
+  worker: {cost:{g:50}, hp:30,mhp:30,atk:2,def:0,rng:1,vis:3,food:0},
+  soldier:{cost:{g:90}, hp:90,mhp:90,atk:8,def:3,rng:1,vis:2,food:1},
+  archer: {cost:{g:100},hp:50,mhp:50,atk:5,def:1,rng:3,vis:3,food:1},
+};
 
-function spriteWorker(C){
-  return svgWrap(`
+// ════════════════════════════════════
+// SVG SPRITES (pre-generated once)
+// ════════════════════════════════════
+const MC={body:'#2aaa50',dark:'#1a6630',light:'#4dff7c',skin:'#c8a060',acc:'#ffcc44',boot:'#4a3010'};
+const EC={body:'#aa2222',dark:'#7a1a1a',light:'#cc4444',skin:'#a06040',acc:'#cc4444',boot:'#2a1010'};
+function sw(inner){return `<svg viewBox="0 0 44 44" width="40" height="40" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;}
+
+function mkWorker(C){return sw(`
   <rect x="17" y="4" width="10" height="9" rx="2" fill="${C.skin}"/>
   <rect x="16" y="7" width="12" height="5" rx="2" fill="${C.acc}"/>
   <rect x="18" y="4" width="8" height="3" rx="1" fill="${C.dark}"/>
-  <rect x="18" y="10" width="3" height="2" rx="0" fill="#111"/>
-  <rect x="23" y="10" width="3" height="2" rx="0" fill="#111"/>
+  <rect x="18" y="10" width="3" height="2" fill="#111"/><rect x="23" y="10" width="3" height="2" fill="#111"/>
   <rect x="15" y="13" width="14" height="15" rx="2" fill="${C.body}"/>
   <rect x="13" y="13" width="5" height="11" rx="1" fill="${C.dark}"/>
   <rect x="26" y="13" width="5" height="11" rx="1" fill="${C.dark}"/>
@@ -227,65 +238,49 @@ function spriteWorker(C){
   <rect x="15" y="28" width="5" height="8" rx="1" fill="${C.dark}"/>
   <rect x="24" y="28" width="5" height="8" rx="1" fill="${C.dark}"/>
   <rect x="14" y="34" width="7" height="4" rx="1" fill="${C.boot}"/>
-  <rect x="23" y="34" width="7" height="4" rx="1" fill="${C.boot}"/>
-  `);
-}
+  <rect x="23" y="34" width="7" height="4" rx="1" fill="${C.boot}"/>`);}
 
-function spriteSoldier(C){
-  const eyeClr = C===EC ? '#ff2222' : '#111';
-  return svgWrap(`
+function mkSoldier(C){const ec=C===EC?'#ff2222':'#111';return sw(`
   <rect x="17" y="3" width="10" height="10" rx="2" fill="${C.skin}"/>
   <rect x="15" y="2" width="14" height="7" rx="2" fill="${C.body}"/>
   <rect x="16" y="1" width="12" height="4" rx="1" fill="${C.dark}"/>
-  <rect x="16" y="8" width="12" height="3" rx="0" fill="#111" opacity="0.7"/>
-  <rect x="18" y="9" width="3" height="2" fill="${eyeClr}" opacity="0.9"/>
-  <rect x="23" y="9" width="3" height="2" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="16" y="8" width="12" height="3" rx="0" fill="#111" opacity=".7"/>
+  <rect x="18" y="9" width="3" height="2" fill="${ec}" opacity=".9"/>
+  <rect x="23" y="9" width="3" height="2" fill="${ec}" opacity=".9"/>
   <rect x="14" y="13" width="16" height="17" rx="2" fill="${C.body}"/>
-  <rect x="15" y="14" width="14" height="15" rx="1" fill="${C.dark}" opacity="0.4"/>
   <rect x="15" y="18" width="14" height="2" fill="${C.dark}"/>
   <rect x="15" y="22" width="14" height="2" fill="${C.dark}"/>
   <rect x="7" y="13" width="7" height="12" rx="2" fill="${C.acc}"/>
   <rect x="8" y="14" width="5" height="10" rx="1" fill="${C===EC?'#7a1a1a':'#aa8822'}"/>
-  <rect x="9" y="18" width="3" height="2" rx="0" fill="${C.acc}"/>
   <rect x="30" y="10" width="3" height="16" rx="1" fill="#aaa"/>
   <rect x="26" y="14" width="8" height="3" rx="0" fill="#888"/>
   <rect x="30" y="24" width="3" height="6" rx="1" fill="#8a6030"/>
   <rect x="15" y="30" width="6" height="8" rx="1" fill="${C.body}"/>
   <rect x="23" y="30" width="6" height="8" rx="1" fill="${C.body}"/>
   <rect x="14" y="36" width="8" height="4" rx="1" fill="${C.boot}"/>
-  <rect x="22" y="36" width="8" height="4" rx="1" fill="${C.boot}"/>
-  `);
-}
+  <rect x="22" y="36" width="8" height="4" rx="1" fill="${C.boot}"/>`);}
 
-function spriteArcher(C){
-  const eyeClr = C===EC ? '#ff2222' : '#111';
-  return svgWrap(`
+function mkArcher(C){const ec=C===EC?'#ff2222':'#111';return sw(`
   <rect x="18" y="5" width="9" height="10" rx="2" fill="${C.skin}"/>
   <rect x="16" y="2" width="13" height="9" rx="4" fill="${C.body}"/>
-  <rect x="17" y="3" width="11" height="7" rx="3" fill="${C.dark}" opacity="0.5"/>
-  <rect x="19" y="11" width="3" height="2" rx="1" fill="${eyeClr}" opacity="0.9"/>
-  <rect x="23" y="11" width="3" height="2" rx="1" fill="${eyeClr}" opacity="0.9"/>
+  <rect x="17" y="3" width="11" height="7" rx="3" fill="${C.dark}" opacity=".5"/>
+  <rect x="19" y="11" width="3" height="2" rx="1" fill="${ec}" opacity=".9"/>
+  <rect x="23" y="11" width="3" height="2" rx="1" fill="${ec}" opacity=".9"/>
   <rect x="16" y="15" width="14" height="17" rx="2" fill="${C.dark}"/>
   <rect x="30" y="14" width="4" height="12" rx="2" fill="#8a6030"/>
-  <rect x="31" y="12" width="2" height="3" rx="0" fill="${C.acc}"/>
-  <rect x="33" y="11" width="2" height="4" rx="0" fill="${C.acc}"/>
+  <rect x="31" y="12" width="2" height="3" fill="${C.acc}"/>
+  <rect x="33" y="11" width="2" height="4" fill="${C.acc}"/>
   <path d="M 8 8 Q 4 22 8 36" stroke="#8a6030" stroke-width="3" fill="none"/>
   <line x1="8" y1="9" x2="8" y2="35" stroke="#c8c0a0" stroke-width="1"/>
   <line x1="8" y1="22" x2="26" y2="18" stroke="#c8c0a0" stroke-width="1.5"/>
   <polygon points="26,18 22,15 22,21" fill="${C===EC?'#cc4444':'#aaa'}"/>
   <rect x="16" y="32" width="6" height="8" rx="1" fill="${C.dark}"/>
-  <rect x="24" y="32" width="6" height="8" rx="1" fill="${C.dark}"/>
-  `);
-}
+  <rect x="24" y="32" width="6" height="8" rx="1" fill="${C.dark}"/>`);}
 
-function spriteTownhall(C){
-  const flag = C===MC ? '#4dff7c' : '#cc4444';
-  return svgWrap(`
+function mkTownhall(C){const fl=C===MC?'#4dff7c':'#cc4444';return sw(`
   <rect x="6" y="26" width="32" height="14" rx="1" fill="${C.dark}"/>
   <rect x="8" y="24" width="28" height="14" rx="1" fill="${C.body}"/>
   <rect x="17" y="28" width="10" height="10" rx="1" fill="#111"/>
-  <rect x="18" y="29" width="4" height="8" rx="0" fill="#0a0f0a" opacity="0.8"/>
-  <rect x="22" y="29" width="4" height="8" rx="0" fill="#0a0f0a" opacity="0.8"/>
   <rect x="6" y="12" width="9" height="16" rx="1" fill="${C.body}"/>
   <rect x="29" y="12" width="9" height="16" rx="1" fill="${C.body}"/>
   <rect x="5" y="8" width="5" height="6" rx="1" fill="${C.dark}"/>
@@ -295,80 +290,48 @@ function spriteTownhall(C){
   <rect x="15" y="6" width="14" height="20" rx="1" fill="${C.dark}"/>
   <rect x="16" y="7" width="12" height="18" rx="1" fill="${C.body}"/>
   <rect x="19" y="10" width="6" height="7" rx="1" fill="#111"/>
-  <rect x="20" y="11" width="2" height="5" rx="0" fill="${flag}" opacity="0.4"/>
-  <rect x="22" y="11" width="2" height="5" rx="0" fill="${flag}" opacity="0.4"/>
-  <rect x="21" y="2" width="2" height="6" fill="${flag}"/>
-  <polygon points="23,2 30,5 23,8" fill="${flag}"/>
-  ${C===EC?'<circle cx="27" cy="5" r="2" fill="#fff" opacity="0.7"/><rect cx="26" cy="7" width="2" height="1" fill="#7a1a1a"/>':''}
-  `);
-}
+  <rect x="21" y="2" width="2" height="6" fill="${fl}"/>
+  <polygon points="23,2 30,5 23,8" fill="${fl}"/>`);}
 
-function spriteFarm(C){
-  const soilC = C===MC ? '#6a4020' : '#4a2010';
-  const wheatC = C===MC ? '#ffcc44' : '#8a4020';
-  return svgWrap(`
-  <rect x="4" y="28" width="36" height="12" rx="2" fill="${soilC}"/>
+function mkFarm(C){const wc=C===MC?'#ffcc44':'#8a4020',sc=C===MC?'#6a4020':'#4a2010';return sw(`
+  <rect x="4" y="28" width="36" height="12" rx="2" fill="${sc}"/>
   <rect x="6" y="26" width="32" height="12" rx="2" fill="${C===MC?'#8a6030':'#6a3020'}"/>
-  <line x1="8" y1="30" x2="36" y2="30" stroke="${soilC}" stroke-width="1.5"/>
-  <line x1="8" y1="34" x2="36" y2="34" stroke="${soilC}" stroke-width="1.5"/>
+  <line x1="8" y1="30" x2="36" y2="30" stroke="${sc}" stroke-width="1.5"/>
+  <line x1="8" y1="34" x2="36" y2="34" stroke="${sc}" stroke-width="1.5"/>
   <rect x="8" y="14" width="3" height="12" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
-  <ellipse cx="10" cy="12" rx="4" ry="6" fill="${wheatC}"/>
+  <ellipse cx="10" cy="12" rx="4" ry="6" fill="${wc}"/>
   <rect x="15" y="10" width="3" height="16" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
-  <ellipse cx="17" cy="8" rx="4" ry="6" fill="${wheatC}"/>
+  <ellipse cx="17" cy="8" rx="4" ry="6" fill="${wc}"/>
   <rect x="22" y="14" width="3" height="12" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
-  <ellipse cx="24" cy="12" rx="4" ry="6" fill="${wheatC}"/>
+  <ellipse cx="24" cy="12" rx="4" ry="6" fill="${wc}"/>
   <rect x="29" y="10" width="3" height="16" rx="1" fill="${C===MC?'#8a6030':'#6a3010'}"/>
-  <ellipse cx="31" cy="8" rx="4" ry="6" fill="${wheatC}"/>
-  <rect x="4" y="22" width="36" height="3" rx="0" fill="${C===MC?'#8a6030':'#6a3010'}"/>
-  <rect x="5"  y="18" width="3" height="8" rx="1" fill="${soilC}"/>
-  <rect x="13" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
-  <rect x="27" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
-  <rect x="36" y="18" width="3" height="8" rx="1" fill="${soilC}"/>
-  `);
-}
+  <ellipse cx="31" cy="8" rx="4" ry="6" fill="${wc}"/>
+  <rect x="4" y="22" width="36" height="3" fill="${C===MC?'#8a6030':'#6a3010'}"/>`);}
 
-function spriteBarracks(C){
-  const flag = C===MC ? '#4dff7c' : '#ff4444';
-  return svgWrap(`
+function mkBarracks(C){const fl=C===MC?'#4dff7c':'#ff4444';return sw(`
   <rect x="5" y="22" width="34" height="18" rx="1" fill="${C.dark}"/>
   <rect x="7" y="20" width="30" height="18" rx="1" fill="${C.body}"/>
   <polygon points="4,22 22,6 40,22" fill="${C.dark}"/>
-  <polygon points="6,22 22,8 38,22" fill="${C.body}" opacity="0.5"/>
+  <polygon points="6,22 22,8 38,22" fill="${C.body}" opacity=".5"/>
   <rect x="17" y="26" width="10" height="14" rx="1" fill="#111"/>
-  <rect x="18" y="27" width="4" height="12" rx="0" fill="#0a0f0a"/>
-  <rect x="22" y="27" width="4" height="12" rx="0" fill="#0a0f0a"/>
   <rect x="8" y="24" width="7" height="7" rx="1" fill="#111"/>
   <rect x="29" y="24" width="7" height="7" rx="1" fill="#111"/>
-  <line x1="18" y1="12" x2="22" y2="18" stroke="${flag}" stroke-width="2"/>
-  <line x1="22" y1="12" x2="18" y2="18" stroke="${flag}" stroke-width="2"/>
-  <circle cx="20" cy="15" r="2" fill="${flag}" opacity="0.6"/>
-  `);
-}
+  <line x1="18" y1="12" x2="22" y2="18" stroke="${fl}" stroke-width="2"/>
+  <line x1="22" y1="12" x2="18" y2="18" stroke="${fl}" stroke-width="2"/>`);}
 
-function spriteTower(C){
-  const arrowC = C===MC ? '#4dff7c' : '#ff4444';
-  return svgWrap(`
+function mkTower(C){const ac=C===MC?'#4dff7c':'#ff4444';return sw(`
   <rect x="13" y="32" width="18" height="10" rx="1" fill="${C.dark}"/>
   <rect x="15" y="16" width="14" height="20" rx="1" fill="${C.body}"/>
-  <rect x="16" y="17" width="12" height="18" rx="1" fill="${C.dark}" opacity="0.4"/>
+  <rect x="16" y="17" width="12" height="18" rx="1" fill="${C.dark}" opacity=".4"/>
   <rect x="19" y="20" width="6" height="10" rx="0" fill="#111"/>
   <rect x="21" y="16" width="2" height="14" rx="0" fill="#111"/>
   <rect x="13" y="8" width="5" height="9" rx="1" fill="${C.body}"/>
   <rect x="19" y="8" width="4" height="9" rx="1" fill="${C.body}"/>
   <rect x="24" y="8" width="5" height="9" rx="1" fill="${C.body}"/>
-  ${C===EC?`
-  <polygon points="15,8 17,4 19,8" fill="${C.light}"/>
-  <polygon points="22,8 24,4 26,8" fill="${C.light}"/>
-  <polygon points="26,8 28,4 30,8" fill="${C.light}"/>
-  `:''}
-  <line x1="22" y1="23" x2="36" y2="14" stroke="${arrowC}" stroke-width="1.5" stroke-dasharray="2,2"/>
-  <polygon points="36,14 32,13 33,17" fill="${arrowC}"/>
-  `);
-}
+  <line x1="22" y1="23" x2="36" y2="14" stroke="${ac}" stroke-width="1.5" stroke-dasharray="2,2"/>
+  <polygon points="36,14 32,13 33,17" fill="${ac}"/>`);}
 
-// Terrain SVGs
-function spriteGold(){
-  return svgWrap(`
+function mkGold(){return sw(`
   <ellipse cx="22" cy="30" rx="14" ry="9" fill="#555"/>
   <ellipse cx="22" cy="28" rx="13" ry="8" fill="#777"/>
   <ellipse cx="19" cy="26" rx="6" ry="4" fill="#ffcc44"/>
@@ -378,89 +341,42 @@ function spriteGold(){
   <line x1="11" y1="14" x2="7" y2="14" stroke="#ffcc44" stroke-width="1.5"/>
   <circle cx="32" cy="18" r="2" fill="#ffcc44"/>
   <line x1="32" y1="14" x2="32" y2="10" stroke="#ffcc44" stroke-width="1"/>
-  <line x1="28" y1="14" x2="36" y2="14" stroke="#ffcc44" stroke-width="1"/>
-  <line x1="16" y1="22" x2="26" y2="30" stroke="#333" stroke-width="2"/>
-  <rect x="10" y="17" width="5" height="3" rx="1" fill="#888" transform="rotate(-40,13,18)"/>
-  `,'');
-}
+  <line x1="28" y1="14" x2="36" y2="14" stroke="#ffcc44" stroke-width="1"/>`);}
 
-function spriteTree(){
-  return svgWrap(`
+function mkTree(){return sw(`
   <rect x="19" y="32" width="6" height="10" rx="1" fill="#8a6030"/>
-  <rect x="20" y="34" width="3" height="8" rx="0" fill="#6a4020"/>
   <polygon points="22,4 4,28 40,28" fill="#1a6020"/>
   <polygon points="22,2 6,22 38,22" fill="#2a8030"/>
   <polygon points="22,0 8,16 36,16" fill="#3aaa40"/>
-  <polygon points="22,2 16,12 28,12" fill="#4dff7c" opacity="0.25"/>
-  <line x1="19" y1="40" x2="11" y2="44" stroke="#6a4020" stroke-width="2"/>
-  <line x1="25" y1="40" x2="33" y2="44" stroke="#6a4020" stroke-width="2"/>
-  `,'');
-}
+  <polygon points="22,2 16,12 28,12" fill="#4dff7c" opacity=".25"/>`);}
 
-function spriteMountain(){
-  return svgWrap(`
+function mkMountain(){return sw(`
   <polygon points="22,4 2,40 42,40" fill="#334455"/>
   <polygon points="12,18 0,40 28,40" fill="#445566"/>
   <polygon points="22,4 10,18 34,18" fill="#aabbcc"/>
-  <polygon points="22,4 18,12 26,12" fill="#ddeeff"/>
-  <polygon points="12,18 6,28 20,28" fill="#aabbcc" opacity="0.6"/>
-  <line x1="8" y1="28" x2="14" y2="38" stroke="#223344" stroke-width="1"/>
-  <line x1="28" y1="24" x2="36" y2="36" stroke="#223344" stroke-width="1"/>
-  `,'');
-}
+  <polygon points="22,4 18,12 26,12" fill="#ddeeff"/>`);}
 
-function spriteConstruct(){
-  return svgWrap(`
+function mkConstruct(){return sw(`
   <rect x="8" y="4" width="3" height="36" rx="1" fill="#8a6030"/>
   <rect x="33" y="4" width="3" height="36" rx="1" fill="#8a6030"/>
-  <rect x="8" y="18" width="28" height="3" rx="0" fill="#8a6030"/>
-  <rect x="8" y="30" width="28" height="3" rx="0" fill="#8a6030"/>
-  <rect x="12" y="22" width="20" height="14" rx="1" fill="#2aaa50" opacity="0.4"/>
-  <rect x="13" y="23" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
-  <rect x="23" y="23" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
-  <rect x="17" y="29" width="8" height="4" rx="0" fill="#1a6630" opacity="0.8"/>
+  <rect x="8" y="18" width="28" height="3" fill="#8a6030"/>
+  <rect x="8" y="30" width="28" height="3" fill="#8a6030"/>
+  <rect x="12" y="22" width="20" height="14" rx="1" fill="#2aaa50" opacity=".4"/>
+  <rect x="13" y="23" width="8" height="4" fill="#1a6630" opacity=".8"/>
+  <rect x="23" y="23" width="8" height="4" fill="#1a6630" opacity=".8"/>
   <rect x="6" y="2" width="32" height="8" rx="2" fill="#ffcc44"/>
   <line x1="6" y1="2" x2="14" y2="10" stroke="#0b0d0f" stroke-width="3"/>
   <line x1="14" y1="2" x2="22" y2="10" stroke="#0b0d0f" stroke-width="3"/>
   <line x1="22" y1="2" x2="30" y2="10" stroke="#0b0d0f" stroke-width="3"/>
-  <line x1="30" y1="2" x2="38" y2="10" stroke="#0b0d0f" stroke-width="3"/>
-  `,'');
-}
+  <line x1="30" y1="2" x2="38" y2="10" stroke="#0b0d0f" stroke-width="3"/>`);}
 
-// Sprite lookup table — functions called once at init to build SP_CACHE
-const SP={
-  worker:    ()=>spriteWorker(MC),
-  soldier:   ()=>spriteSoldier(MC),
-  archer:    ()=>spriteArcher(MC),
-  townhall:  ()=>spriteTownhall(MC),
-  farm:      ()=>spriteFarm(MC),
-  barracks:  ()=>spriteBarracks(MC),
-  tower:     ()=>spriteTower(MC),
-  e_worker:  ()=>spriteWorker(EC),
-  e_soldier: ()=>spriteSoldier(EC),
-  e_archer:  ()=>spriteArcher(EC),
-  e_townhall:()=>spriteTownhall(EC),
-  e_farm:    ()=>spriteFarm(EC),
-  e_barracks:()=>spriteBarracks(EC),
-  e_tower:   ()=>spriteTower(EC),
-  gold:      ()=>spriteGold(),
-  tree:      ()=>spriteTree(),
-  mountain:  ()=>spriteMountain(),
-  construct: ()=>spriteConstruct(),
-};
-// Pre-generate all sprite strings once — never call SP[x]() again after this
-const SPC={}; // Sprite Pre-generated Cache
-Object.keys(SP).forEach(k=>{ SPC[k]=SP[k](); });
-const BD={ // building defs
-  townhall:{cost:{g:0,w:0},   hp:300,food:10,bt:0 },
-  farm:    {cost:{g:60,w:30}, hp:80, food:5, bt:8 },
-  barracks:{cost:{g:120,w:50},hp:120,food:0, bt:12},
-  tower:   {cost:{g:150,w:100},hp:120,food:0,bt:18,atk:5,rng:3},
-};
-const UD={ // unit defs — def: damage reduction per hit (min 1 dmg always)
-  worker: {cost:{g:50}, hp:30, atk:2, def:0, rng:1,vis:3,food:0},
-  soldier:{cost:{g:90}, hp:90, atk:8, def:3, rng:1,vis:2,food:1},
-  archer: {cost:{g:100},hp:50, atk:5, def:1, rng:3,vis:3,food:1},
+// Pre-generate all sprites once at startup
+const SPC={
+  worker:mkWorker(MC),    soldier:mkSoldier(MC),   archer:mkArcher(MC),
+  townhall:mkTownhall(MC),farm:mkFarm(MC),          barracks:mkBarracks(MC), tower:mkTower(MC),
+  e_worker:mkWorker(EC),  e_soldier:mkSoldier(EC), e_archer:mkArcher(EC),
+  e_townhall:mkTownhall(EC),e_farm:mkFarm(EC),     e_barracks:mkBarracks(EC),e_tower:mkTower(EC),
+  gold:mkGold(), tree:mkTree(), mountain:mkMountain(), construct:mkConstruct(),
 };
 
 // ════════════════════════════════════
@@ -469,471 +385,110 @@ const UD={ // unit defs — def: damage reduction per hit (min 1 dmg always)
 let G={};
 let tickTmr=null, speedLv=1, gameMode='solo';
 
-// ─ Selection / Interaction ─
-// phase: idle | sel | build_place
-// selUnits: [unit,...] (my units currently selected)
-// selBldg: building | null
-// buildType: string when phase=build_place
-let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
-
-// ─ Pointer state for drag-select vs scroll vs tap ─
-let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false};
-
-// ════════════════════════════════════
-// FIREBASE SIGNALING + WebRTC DataChannel
-// Firebase 只做信令交換，遊戲資料走純 P2P DataChannel
-// ════════════════════════════════════
-const FB_CONFIG={
-  apiKey:"AIzaSyCCshqyIyhQ86R3wZ8zH2kd-hL8vKiEtSU",
-  databaseURL:"https://test6-1d148-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId:"test6-1d148",
-};
-const ICE_SERVERS=[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:'stun:stun1.l.google.com:19302'},
-];
-
-let fbApp=null, fbDb=null;
-let rtcConn=null, dataChannel=null;
-let peerRole=null, roomId=null, roomRef=null;
-let P2cmdQueue=[];
-
-function loadFirebase(cb){
-  if(window.firebase){cb();return;}
-  el('peer-msg').textContent='載入 Firebase...';
-  const urls=[
-    'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
-    'https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js',
-  ];
-  let n=0;
-  urls.forEach(src=>{
-    const s=document.createElement('script');
-    s.src=src;
-    s.onload=()=>{if(++n===urls.length)cb();};
-    s.onerror=()=>{el('peer-msg').textContent='❌ Firebase 載入失敗，請確認網路';};
-    document.head.appendChild(s);
-  });
-}
-
-function initFirebase(){
-  if(fbApp)return;
-  fbApp=firebase.initializeApp(FB_CONFIG);
-  fbDb=firebase.database();
-}
-
-function makeRoomCode(){
-  return Math.random().toString(36).slice(2,8).toUpperCase();
-}
-
-function openPeer(role){
-  peerRole=role;
-  cleanupRTC();
-  el('peer-ovl').classList.add('show');
-  el('peer-title').textContent=role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
-  el('peer-room-code').style.display='none';
-  el('peer-input').style.display=role==='guest'?'block':'none';
-  el('peer-connect-btn').style.display='none';
-  el('peer-msg').textContent='初始化...';
-  loadFirebase(()=>{
-    initFirebase();
-    if(role==='host') hostCreate();
-    else {el('peer-msg').textContent='輸入房間碼後按連線';el('peer-connect-btn').style.display='block';}
-  });
-}
-
-function closePeer(){el('peer-ovl').classList.remove('show');}
-
-async function hostCreate(){
-  roomId=makeRoomCode();
-  roomRef=fbDb.ref('rooms/'+roomId);
-  await roomRef.remove();
-  el('peer-room-code').textContent=roomId;
-  el('peer-room-code').style.display='block';
-  el('peer-msg').textContent='等待對方輸入房間碼...';
-
-  rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
-  dataChannel=rtcConn.createDataChannel('game',{ordered:true});
-  setupDataChannel(dataChannel);
-
-  const iceCands=[];
-  rtcConn.onicecandidate=e=>{if(e.candidate)iceCands.push(e.candidate.toJSON());};
-  rtcConn.onicegatheringstatechange=async()=>{
-    if(rtcConn.iceGatheringState==='complete'){
-      await roomRef.child('offer').set({
-        sdp:rtcConn.localDescription.sdp,
-        type:rtcConn.localDescription.type,
-        ice:JSON.stringify(iceCands),
-      });
-    }
-  };
-  const offer=await rtcConn.createOffer();
-  await rtcConn.setLocalDescription(offer);
-
-  roomRef.child('answer').on('value',async snap=>{
-    if(!snap.val()||rtcConn.remoteDescription)return;
-    const a=snap.val();
-    await rtcConn.setRemoteDescription({type:a.type,sdp:a.sdp});
-    for(const c of JSON.parse(a.ice||'[]'))
-      await rtcConn.addIceCandidate(new RTCIceCandidate(c));
-    el('peer-msg').textContent='🔗 建立連線中...';
-  });
-}
-
-function guestConnect(){
-  const code=el('peer-input').value.trim().toUpperCase();
-  if(code.length<4){alert('請輸入房間碼');return;}
-  roomId=code; roomRef=fbDb.ref('rooms/'+roomId);
-  el('peer-msg').textContent='讀取房間...';
-  el('peer-connect-btn').style.display='none';
-  roomRef.child('offer').once('value',async snap=>{
-    if(!snap.val()){
-      el('peer-msg').textContent='❌ 找不到房間，請確認房間碼';
-      el('peer-connect-btn').style.display='block'; return;
-    }
-    const o=snap.val();
-    rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
-    rtcConn.ondatachannel=e=>{dataChannel=e.channel;setupDataChannel(dataChannel);};
-    const iceCands=[];
-    rtcConn.onicecandidate=e=>{if(e.candidate)iceCands.push(e.candidate.toJSON());};
-    rtcConn.onicegatheringstatechange=async()=>{
-      if(rtcConn.iceGatheringState==='complete'){
-        await roomRef.child('answer').set({
-          sdp:rtcConn.localDescription.sdp,
-          type:rtcConn.localDescription.type,
-          ice:JSON.stringify(iceCands),
-        });
-        el('peer-msg').textContent='🔗 建立連線中...';
-      }
-    };
-    await rtcConn.setRemoteDescription({type:o.type,sdp:o.sdp});
-    for(const c of JSON.parse(o.ice||'[]'))
-      await rtcConn.addIceCandidate(new RTCIceCandidate(c));
-    const answer=await rtcConn.createAnswer();
-    await rtcConn.setLocalDescription(answer);
-  });
-}
-
-function setupDataChannel(ch){
-  ch.onopen=()=>{
-    el('peer-msg').textContent='✅ 連線成功！';
-    if(roomRef)roomRef.remove();
-    setTimeout(()=>{
-      closePeer();
-      if(peerRole==='host') startHost();
-      else                  startGuest();
-    },600);
-  };
-  ch.onmessage=e=>onPeerMsg(JSON.parse(e.data));
-  ch.onclose=()=>glog('⚠️ 對方斷線');
-  ch.onerror=()=>glog('❌ DataChannel 錯誤');
-}
-
-function sendRaw(obj){
-  if(dataChannel&&dataChannel.readyState==='open')
-    dataChannel.send(JSON.stringify(obj));
-}
-
-function cleanupRTC(){
-  if(dataChannel){try{dataChannel.close();}catch(e){} dataChannel=null;}
-  if(rtcConn){try{rtcConn.close();}catch(e){} rtcConn=null;}
-  if(roomRef){try{roomRef.remove();}catch(e){} roomRef=null;}
-  P2cmdQueue=[];
-}
-
-function startHost(){
-  gameMode='host';
-  initGame(1);
-  P2cmdQueue=[];
-  clearInterval(tickTmr);
-  tickTmr=setInterval(()=>{
-    if(G.over){clearInterval(tickTmr);return;}
-    P2cmdQueue.splice(0).forEach(cmd=>applyCmd(cmd,2));
-    tick();
-    sendToGuest();
-  },TICK_MS);
-  glog('✅ Host 已連線，遊戲開始！');
-}
-
-function startGuest(){
-  gameMode='guest';
-  initGame(2); // Guest is P2 — builds DOM, sets G.myP=2
-  el('speed-btn').style.display='none';
-  clearInterval(tickTmr); tickTmr=null;
-  // Scroll to P2 spawn (right side of map)
-  setTimeout(()=>{
-    const wrap=el('map-wrap');
-    wrap.scrollLeft=MW*CS-wrap.clientWidth;
-    wrap.scrollTop=Math.max(0,10*CS-wrap.clientHeight/2);
-  },50);
-  glog('✅ Guest 已連線，等待遊戲資料...');
-}
-
-// Compact field lists for serialization (order matters)
-const BFLDS=['id','type','owner','x','y','hp','mhp','bp','bt','uc','tq','tp'];
-const UFLDS=['id','type','owner','x','y','hp','mhp','atk','def','rng','vis','food','act','tgt'];
-
-function packArr(obj,flds){ return flds.map(f=>obj[f]); }
-function unpackArr(arr,flds){ const o={}; flds.forEach((f,i)=>o[f]=arr[i]); return o; }
-
-function sendToGuest(){
-  sendRaw({
-    t:'s',
-    k:G.tick, o:G.over, w:G.winner,
-    r:G.res,
-    m:G.map,  // terrain (static after first send, but small enough to always send)
-    f:G.fog[1],
-    b:G.bldgs.map(b=>packArr(b,BFLDS)),
-    u:G.units.map(u=>packArr(u,UFLDS)),
-    c:G.uc, d:G.bc,
-  });
-}
-
-function sendCmd(cmd){
-  if(gameMode==='guest') sendRaw({t:'cmd',cmd});
-}
-
-function onPeerMsg(msg){
-  if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
-  if(msg.t==='s'){
-    // Unpack compact format
-    const prevUnits=G.units;
-    const prevBldgs=G.bldgs;
-
-    G.tick=msg.k; G.over=msg.o; G.winner=msg.w;
-    G.res=msg.r;
-    if(msg.m) G.map=msg.m;
-    G.fog=[[],msg.f];
-    G.bldgs=msg.b.map(a=>unpackArr(a,BFLDS));
-    G.units=msg.u.map(a=>unpackArr(a,UFLDS));
-    G.uc=msg.c; G.bc=msg.d;
-    G.myP=2;
-
-    // Smart cache invalidation: only clear cells that changed
-    // (positions of moved units, dead units, fog changes)
-    const changedCells=new Set();
-
-    // Cells where units were last tick
-    prevUnits.forEach(u=>changedCells.add(`${u.x},${u.y}`));
-    // Cells where units are now
-    G.units.forEach(u=>changedCells.add(`${u.x},${u.y}`));
-    // Cells where buildings were/are (hp changes)
-    prevBldgs.forEach(b=>changedCells.add(`${b.x},${b.y}`));
-    G.bldgs.forEach(b=>changedCells.add(`${b.x},${b.y}`));
-    // Clear cache only for changed cells + fog boundary changes
-    // For fog: clear all vis/seen boundary cells (approximate, fast)
-    changedCells.forEach(k=>{ delete renderCache[k]; });
-    // Also clear fog: any cell whose fog state may have changed
-    // (unit movement changes fog, so clear cells near moved units)
-    G.units.forEach(u=>{
-      for(let dy=-u.vis-1;dy<=u.vis+1;dy++) for(let dx=-u.vis-1;dx<=u.vis+1;dx++){
-        delete renderCache[`${u.x+dx},${u.y+dy}`];
-      }
-    });
-
-    el('h-tick').textContent='T'+G.tick;
-    updateHUD(); render();
-    if(G.over) showWin();
-  }
-}
-
-function applyCmd(cmd,owner){
-  if(cmd.act==='move'){
-    const us=G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner);
-    assignSpreadMove(us,cmd.tgt[0],cmd.tgt[1]);
-  }
-  else if(cmd.act==='attack'){
-    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
-      .forEach(u=>{u.act='attack';u.tgt=cmd.tgt;});
-  }
-  else if(cmd.act==='harvest'){
-    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
-      .forEach(u=>{u.act='harvest';u.tgt=cmd.tgt;});
-  }
-  else if(cmd.act==='repair'){
-    G.units.filter(u=>cmd.unitIds.includes(u.id)&&u.owner===owner)
-      .forEach(u=>{u.act='repair';u.tgt=cmd.tgt;});
-  }
-  else if(cmd.act==='build'){
-    const d=BD[cmd.buildType],p=G.res[owner];
-    if(p.gold>=d.cost.g&&p.wood>=d.cost.w&&canBuild(cmd.tgt[0],cmd.tgt[1])){
-      p.gold-=d.cost.g;p.wood-=d.cost.w;
-      addBldg(cmd.buildType,owner,cmd.tgt[0],cmd.tgt[1],true);
-      const w=G.units.find(u=>cmd.unitIds.includes(u.id)&&u.type==='worker');
-      if(w){w.act='move';w.tgt=cmd.tgt;}
-    }
-  }
-  else if(cmd.act==='train'){
-    const b=G.bldgs.find(b=>b.id===cmd.bldgId&&b.owner===owner);
-    if(!b)return;
-    const p=G.res[owner],cost=UD[cmd.utype].cost.g;
-    if(p.gold>=cost&&(cmd.utype==='worker'||p.food<p.foodMax)){
-      p.gold-=cost;b.tq.push(cmd.utype);
-    }
-  }
-}
-
-// ════════════════════════════════════
-// MULTI — hook into existing actions for Guest
-// All action functions check gameMode and send cmd if Guest
-// ════════════════════════════════════
-function multiMove(units,tx,ty){
-  if(gameMode==='guest'){
-    sendCmd({act:'move', unitIds:units.map(u=>u.id), tgt:[tx,ty]});
-    // Optimistic local preview
-    assignSpreadMove(units,tx,ty);
-  } else {
-    assignSpreadMove(units,tx,ty);
-  }
-}
-function multiAttack(units,tgtId){
-  if(gameMode==='guest') sendCmd({act:'attack', unitIds:units.map(u=>u.id), tgt:tgtId});
-  units.forEach(u=>{u.act='attack';u.tgt=tgtId;});
-}
-function multiHarvest(units,pos){
-  if(gameMode==='guest') sendCmd({act:'harvest', unitIds:units.map(u=>u.id), tgt:pos});
-  units.forEach(u=>{u.act='harvest';u.tgt=pos;});
-}
-function multiRepair(units,bldgId){
-  if(gameMode==='guest') sendCmd({act:'repair', unitIds:units.map(u=>u.id), tgt:bldgId});
-  units.forEach(u=>{u.act='repair';u.tgt=bldgId;});
-}
-function multiBuild(units,buildType,pos){
-  const d=BD[buildType]; const p=G.res[G.myP];
-  if(p.gold<d.cost.g||p.wood<d.cost.w){glog('❌ 資源不足');return;}
-  const w=units.find(u=>u.type==='worker'); if(!w) return;
-  if(gameMode==='guest'){
-    sendCmd({act:'build', unitIds:units.map(u=>u.id), buildType, tgt:pos});
-    // Optimistic deduct locally (will be corrected on next state sync)
-    p.gold-=d.cost.g; p.wood-=d.cost.w;
-  } else {
-    p.gold-=d.cost.g; p.wood-=d.cost.w;
-    addBldg(buildType,G.myP,pos[0],pos[1],true);
-  }
-  w.act='move'; w.tgt=pos;
-  glog(`🏗️ 建造 ${buildType} → ${cs(pos[0],pos[1])}`);
-  updateHUD();
-}
-function multiTrain(bldgId,utype){
-  const b=G.bldgs.find(b=>b.id===bldgId); if(!b) return;
-  const p=G.res[G.myP];
-  const cost=UD[utype].cost.g;
-  if(p.gold<cost){glog('❌ 金幣不足');return;}
-  if(utype!=='worker'&&p.food>=p.foodMax){glog('❌ 食物已滿');return;}
-  if(gameMode==='guest'){
-    sendCmd({act:'train', bldgId, utype});
-    p.gold-=cost; // optimistic
-  } else {
-    p.gold-=cost; b.tq.push(utype);
-  }
-  glog(`✅ ${utype} 加入訓練`);
-  updateHUD(); showBldgPanel(b);
-}
-
-// (onPeerMsg defined above in Firebase section handles both host and guest)
-
-// ════════════════════════════════════
-// INIT
-// ════════════════════════════════════
-function startSolo(){ gameMode='solo'; initGame(1); }
-
-function initGame(myPlayer){
-  document.getElementById('menu').style.display='none';
-  document.getElementById('game').style.display='flex';
-  speedLv=1; document.getElementById('speed-btn').textContent='1x';
-  G={
-    tick:0, over:false, winner:null, myP:myPlayer,
+function newG(myP=1){
+  return {
+    tick:0, over:false, winner:null, myP,
     res:{1:{gold:150,wood:100,food:0,foodMax:10},2:{gold:150,wood:100,food:0,foodMax:10}},
     map:[], fog:[[],[]], bldgs:[], units:[],
     uc:{1:{w:0,s:0,a:0},2:{w:0,s:0,a:0}}, bc:1,
   };
-  buildMap(); placeStart(); updateFog();
-  buildDOM(); updateHUD(); render(); resetSel();
-  setTimeout(()=>{
-    const wrap=el('map-wrap');
-    wrap.scrollLeft=0; wrap.scrollTop=Math.max(0,9*CS-wrap.clientHeight/2);
-  },50);
-  glog('點選👷Worker → 點💰採金 / 點空地移動 / 點建築建造');
-  if(gameMode==='solo'){
-    clearInterval(tickTmr);
-    tickTmr=setInterval(()=>{tick(1);if(G.over)clearInterval(tickTmr);},TICK_MS);
-  }
 }
 
-function buildMap(){
-  for(let y=0;y<MH;y++){
-    G.map.push([]);G.fog[0].push([]);G.fog[1].push([]);
-    for(let x=0;x<MW;x++){G.map[y].push(T.E);G.fog[0][y].push('h');G.fog[1][y].push('h');}
-  }
-  // Mountains
-  [[5,5],[6,5],[5,6],[7,8],[8,8],[16,11],[17,11],[16,12],[11,9],[12,9],[11,10]].forEach(([x,y])=>setTile(x,y,T.M));
-  // Trees
-  [[3,2],[4,3],[3,4],[17,15],[18,16],[17,14],[8,3],[9,4],[14,14],[15,15],[6,9],[7,10],[13,8],[14,9],[10,3],[11,4],[13,16],[14,17]].forEach(([x,y])=>setTile(x,y,T.W));
-  // Gold mines
-  [[2,2],[20,2],[2,17],[20,17],[11,7],[11,13]].forEach(([x,y])=>setTile(x,y,T.G));
-}
-function setTile(x,y,t){if(inB(x,y))G.map[y][x]=t;}
+// Resource tile index (built once per game)
+let goldTiles=[], woodTiles=[];
 
-function placeStart(){
-  addBldg('townhall',1,1,9);  addBldg('townhall',2,22,10);
-  addUnit('worker',1,2,9);    addUnit('worker',1,1,10);
-  addUnit('worker',2,21,10);  addUnit('worker',2,22,9);
-}
-
-function addBldg(type,owner,x,y,underConst=false){
-  const d=BD[type];
-  const id='b'+G.bc++;
-  G.bldgs.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,
-    bp:underConst?0:d.bt, bt:d.bt, uc:underConst, tq:[],tp:0});
-  if(d.food&&!underConst) G.res[owner].foodMax+=d.food;
-  return id;
-}
-
-function addUnit(type,owner,x,y){
-  const d=UD[type];
-  const pk=type[0];
-  G.uc[owner][pk]++;
-  const id=pk+G.uc[owner][pk]+'p'+owner;
-  G.units.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,
-    atk:d.atk,def:d.def||0,rng:d.rng,vis:d.vis,food:d.food,
-    act:null,tgt:null});
-  G.res[owner].food+=d.food;
-  return id;
-}
-
-// ════════════════════════════════════
-// FOG OF WAR
-// ════════════════════════════════════
-function updateFog(){
-  // decay vis→seen
+function buildTileIndex(){
+  goldTiles=[]; woodTiles=[];
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
-    if(G.fog[0][y][x]==='v') G.fog[0][y][x]='s';
-    if(G.fog[1][y][x]==='v') G.fog[1][y][x]='s';
+    if(G.map[y][x]===T.G) goldTiles.push([x,y]);
+    else if(G.map[y][x]===T.W) woodTiles.push([x,y]);
   }
-  // reveal around all entities
-  [...G.units,...G.bldgs].forEach(e=>{
+}
+
+// ════════════════════════════════════
+// FOG — incremental update
+// ════════════════════════════════════
+// fog values stored as numbers: 0=hidden 1=seen 2=visible (faster than string compare)
+// fog arrays: G.fog[playerIdx][y][x] = 0|1|2
+
+function initFog(){
+  G.fog=[[],[]];
+  for(let p=0;p<2;p++){
+    G.fog[p]=[];
+    for(let y=0;y<MH;y++){G.fog[p].push(new Uint8Array(MW));}// 0=hidden
+  }
+}
+
+// Track which entities revealed fog last tick (for incremental update)
+let fogRevealers={1:[], 2:[]};// [owner] -> [{x,y,vis}] previous positions
+
+function updateFog(){
+  // Decay vis(2)→seen(1) only for cells we previously revealed
+  // Then re-reveal from current positions
+  const allE=[...G.units,...G.bldgs];
+  const newRevealers={1:[],2:[]};
+
+  // Decay previous visible cells
+  for(const p of [1,2]){
+    for(const {x,y,vis} of fogRevealers[p]){
+      const v=vis||(BD['tower']?.rng?BD['tower'].rng+1:2);
+      for(let dy=-v-1;dy<=v+1;dy++) for(let dx=-v-1;dx<=v+1;dx++){
+        const nx=x+dx,ny=y+dy;
+        if(inB(nx,ny)&&G.fog[p-1][ny][nx]===2) G.fog[p-1][ny][nx]=1;
+      }
+    }
+  }
+
+  // Reveal from current entity positions
+  for(const e of allE){
+    const p=e.owner-1;
     const v=e.vis||(BD[e.type]?.rng?BD[e.type].rng+1:2);
     for(let dy=-v;dy<=v;dy++) for(let dx=-v;dx<=v;dx++){
       const nx=e.x+dx,ny=e.y+dy;
-      if(inB(nx,ny)&&Math.abs(dx)+Math.abs(dy)<=v+1)
-        G.fog[e.owner-1][ny][nx]='v';
+      if(inB(nx,ny)&&Math.abs(dx)+Math.abs(dy)<=v+1) G.fog[p][ny][nx]=2;
     }
-  });
+    newRevealers[e.owner].push({x:e.x,y:e.y,vis:v});
+  }
+  fogRevealers=newRevealers;
 }
 
-function fog1(x,y){return G.fog[(G.myP||1)-1]?.[y]?.[x];} // fog for current player
-function canSee(owner,x,y){return G.fog[owner-1]?.[y]?.[x]==='v';}
+function fog1(x,y){return G.fog[(G.myP||1)-1]?.[y]?.[x]??0;}
+function canSee(owner,x,y){return (G.fog[owner-1]?.[y]?.[x]??0)>=2;}
 
 // ════════════════════════════════════
-// BUILD DOM
+// POSITION MAP — O(1) unit lookup
+// ════════════════════════════════════
+let posMap={}; // "x,y" -> unit (rebuilt each tick)
+
+function buildPosMap(){
+  posMap={};
+  for(const u of G.units) posMap[`${u.x},${u.y}`]=u;
+}
+
+function posOccupied(x,y){
+  return !!(posMap[`${x},${y}`]||G.bldgs.find(b=>b.x===x&&b.y===y));
+}
+
+// ════════════════════════════════════
+// RENDER — three-layer separated DOM updates
+// Layer 1: fog class (fog/seen/vis)
+// Layer 2: sprite innerHTML (only when content changes)
+// Layer 3: HP bar width (only when HP changes)
 // ════════════════════════════════════
 let CE={}; // "x,y" -> {el, ci, hpb, hpf}
+// Per-cell cache — separate keys for each layer
+let fogCache={};  // "x,y" -> fog value 0/1/2
+let sprCache={};  // "x,y" -> sprite key string
+let hpCache={};   // "x,y" -> "pct:cls" string
+let prevSelKeys=new Set();
+let prevBuildKeys=new Set();
 
 function buildDOM(){
   const canvas=el('map-canvas');
   canvas.innerHTML='';
   canvas.style.width=(MW*CS)+'px';
   canvas.style.height=(MH*CS)+'px';
-  CE={}; renderCache={};
+  CE={}; fogCache={}; sprCache={}; hpCache={};
   prevSelKeys=new Set(); prevBuildKeys=new Set();
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const d=document.createElement('div');
@@ -949,403 +504,601 @@ function buildDOM(){
     hpf.className='hpf my';
     hpb.appendChild(hpf);
     d.appendChild(lbl); d.appendChild(ci); d.appendChild(hpb);
-    CE[`${x},${y}`]={el:d, ci, hpb, hpf};
+    CE[`${x},${y}`]={el:d,ci,hpb,hpf};
     canvas.appendChild(d);
   }
   setupPointer();
 }
 
-// ════════════════════════════════════
-// RENDER — dirty check, only update changed cells
-// ════════════════════════════════════
-let renderCache={}; // key -> last rendered string
-
-function cellKey(x,y,f,icon,hp,mhp,isEn){
-  return `${f}|${icon}|${hp}|${mhp}|${isEn?1:0}`;
-}
-
 function render(){
   const myP=G.myP||1;
-  const bAt={},uAt={};
-  G.bldgs.forEach(b=>{bAt[`${b.x},${b.y}`]=b;});
-  G.units.forEach(u=>{const k=`${u.x},${u.y}`;if(!uAt[k])uAt[k]=[];uAt[k].push(u);});
+  // Build lookup maps for this render pass
+  const bAt={};
+  for(const b of G.bldgs) bAt[`${b.x},${b.y}`]=b;
+  const uAt={};
+  for(const u of G.units){
+    const k=`${u.x},${u.y}`;
+    if(!uAt[k]) uAt[k]=[];
+    uAt[k].push(u);
+  }
 
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const c=CE[`${x},${y}`]; if(!c) continue;
-    const f=fog1(x,y);
+    const k=`${x},${y}`;
+    const f=fog1(x,y); // 0|1|2
+
+    // ── Layer 1: fog class ──
+    if(fogCache[k]!==f){
+      fogCache[k]=f;
+      const fc=f===0?'fog':f===1?'seen':'vis';
+      // preserve highlight classes
+      const hl=c.el.classList.contains('h-sel')?'h-sel':c.el.classList.contains('h-build')?'h-build':'';
+      c.el.className='cell '+fc+(hl?' '+hl:'');
+    }
+
+    if(f===0){
+      // ensure sprite cleared
+      if(sprCache[k]!==''){sprCache[k]='';c.ci.innerHTML='';c.hpb.style.display='none';hpCache[k]='';}
+      continue;
+    }
+
+    // ── Layer 2: sprite ──
     const t=G.map[y]?.[x]??T.E;
-    let sprKey=f==='h'?'':(t===T.G?'gold':t===T.W?'tree':t===T.M?'mountain':'');
-    let hp=0,mhp=1,isEn=false,multi=false;
+    let sprKey=t===T.G?'gold':t===T.W?'tree':t===T.M?'mountain':'';
+    let showHp=false, hp=0, mhp=1, isEn=false, multi=false;
 
-    if(f!=='h'){
-      const b=bAt[`${x},${y}`];
-      if(b&&(f==='v'||b.owner===myP)){
-        sprKey=b.uc?'construct':(b.owner!==myP?'e_'+b.type:b.type);
-        hp=b.hp; mhp=b.mhp; isEn=b.owner!==myP;
+    const b=bAt[k];
+    if(b&&(f===2||b.owner===myP)){
+      sprKey=b.uc?'construct':(b.owner!==myP?'e_'+b.type:b.type);
+      hp=b.hp; mhp=b.mhp; isEn=b.owner!==myP; showHp=true;
+    }
+    const us=uAt[k];
+    if(us&&f===2){
+      const show=us.find(u=>u.owner===myP)||us[0];
+      if(show){
+        sprKey=show.owner!==myP?'e_'+show.type:show.type;
+        hp=show.hp; mhp=show.mhp; isEn=show.owner!==myP; showHp=true;
       }
-      const us=uAt[`${x},${y}`];
-      if(us&&f==='v'){
-        const show=us.find(u=>u.owner===myP)||us.find(u=>u.owner!==myP);
-        if(show){
-          sprKey=show.owner!==myP?'e_'+show.type:show.type;
-          hp=show.hp; mhp=show.mhp; isEn=show.owner!==myP;
-        }
-        if(us.length>1) multi=true;
-      }
+      if(us.length>1) multi=true;
     }
 
-    const cacheKey=`${f}|${sprKey}|${hp}|${mhp}|${isEn?1:0}|${multi?1:0}`;
-    if(renderCache[`${x},${y}`]===cacheKey) continue;
-    renderCache[`${x},${y}`]=cacheKey;
-
-    // Update fog class (preserve highlight classes)
-    const fogCls=f==='h'?'fog':f==='s'?'seen':'vis';
-    const hlCls=['h-sel','h-build'].filter(cls=>c.el.classList.contains(cls));
-    c.el.className='cell '+fogCls+(hlCls.length?' '+hlCls.join(' '):'');
-
-    // Sprite — use pre-generated string from SPC (no function call)
-    if(sprKey && SPC[sprKey]){
-      c.ci.innerHTML=SPC[sprKey]+(multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'');
-    } else {
-      c.ci.innerHTML='';
+    const fullSprKey=sprKey+(multi?'+':'');
+    if(sprCache[k]!==fullSprKey){
+      sprCache[k]=fullSprKey;
+      c.ci.innerHTML=sprKey&&SPC[sprKey]
+        ? SPC[sprKey]+(multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'')
+        : '';
     }
 
-    // HP bar — direct reference, no querySelector
-    if(hp>0){
-      c.hpb.style.display='block';
-      const pct=Math.max(0,hp/mhp*100);
-      c.hpf.style.width=pct+'%';
-      c.hpf.className='hpf '+(isEn?'en':pct<30?'lo':'my');
-    } else {
+    // ── Layer 3: HP bar ──
+    if(showHp){
+      const pct=Math.max(0,Math.round(hp/mhp*100));
+      const cls=isEn?'en':pct<30?'lo':'my';
+      const hpKey=pct+'|'+cls;
+      if(hpCache[k]!==hpKey){
+        hpCache[k]=hpKey;
+        c.hpb.style.display='block';
+        c.hpf.style.width=pct+'%';
+        c.hpf.className='hpf '+cls;
+      }
+    } else if(hpCache[k]!=='none'){
+      hpCache[k]='none';
       c.hpb.style.display='none';
     }
   }
   applyHighlights();
 }
 
-let prevSelKeys=new Set();
-let prevBuildKeys=new Set();
-
 function applyHighlights(){
-  // Re-resolve selected unit positions from live G.units
-  const liveSelUnits=SEL.selUnits.map(u=>G.units.find(v=>v.id===u.id)).filter(Boolean);
-  SEL.selUnits=liveSelUnits;
-  const selKeys=new Set(liveSelUnits.map(u=>`${u.x},${u.y}`));
+  // Re-resolve from live units
+  const live=SEL.selUnits.map(u=>G.units.find(v=>v.id===u.id)).filter(Boolean);
+  SEL.selUnits=live;
+  const selKeys=new Set(live.map(u=>`${u.x},${u.y}`));
   if(SEL.selBldg){
     const lb=G.bldgs.find(b=>b.id===SEL.selBldg.id);
-    if(lb){ SEL.selBldg=lb; selKeys.add(`${lb.x},${lb.y}`); }
+    if(lb){SEL.selBldg=lb; selKeys.add(`${lb.x},${lb.y}`);}
   }
-  // Only update cells whose sel state changed
-  prevSelKeys.forEach(k=>{ if(!selKeys.has(k)) CE[k]?.el.classList.remove('h-sel'); });
-  selKeys.forEach(k=>{ if(!prevSelKeys.has(k)) CE[k]?.el.classList.add('h-sel'); });
+  prevSelKeys.forEach(k=>{if(!selKeys.has(k)) CE[k]?.el.classList.remove('h-sel');});
+  selKeys.forEach(k=>{if(!prevSelKeys.has(k)) CE[k]?.el.classList.add('h-sel');});
   prevSelKeys=selKeys;
 
-  // Build highlights: only 5x5 around worker
   const worker=SEL.phase==='build_place'?SEL.selUnits.find(u=>u.type==='worker'):null;
   const buildKeys=new Set();
   if(worker){
     for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++){
-      const x=worker.x+dx, y=worker.y+dy;
-      if(canBuild(x,y)&&fog1(x,y)!=='h') buildKeys.add(`${x},${y}`);
+      const x=worker.x+dx,y=worker.y+dy;
+      if(canBuild(x,y)&&fog1(x,y)>0) buildKeys.add(`${x},${y}`);
     }
   }
-  prevBuildKeys.forEach(k=>{ if(!buildKeys.has(k)) CE[k]?.el.classList.remove('h-build'); });
-  buildKeys.forEach(k=>{ if(!prevBuildKeys.has(k)) CE[k]?.el.classList.add('h-build'); });
+  prevBuildKeys.forEach(k=>{if(!buildKeys.has(k)) CE[k]?.el.classList.remove('h-build');});
+  buildKeys.forEach(k=>{if(!prevBuildKeys.has(k)) CE[k]?.el.classList.add('h-build');});
   prevBuildKeys=buildKeys;
 }
 
 // ════════════════════════════════════
-// POINTER HANDLING
-// Separate: scroll (1-finger, no unit down) vs drag-select (1-finger, unit down)
+// FIREBASE SIGNALING + WebRTC
 // ════════════════════════════════════
-function setupPointer(){
-  const wrap=el('map-wrap');
-  wrap.addEventListener('touchstart', onTS, {passive:false});
-  wrap.addEventListener('touchmove',  onTM, {passive:false});
-  wrap.addEventListener('touchend',   onTE, {passive:false});
-  wrap.addEventListener('mousedown',  onMD);
-  wrap.addEventListener('mousemove',  onMM);
-  wrap.addEventListener('mouseup',    onMU);
+const FB_CONFIG={
+  apiKey:"AIzaSyCCshqyIyhQ86R3wZ8zH2kd-hL8vKiEtSU",
+  databaseURL:"https://test6-1d148-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:"test6-1d148",
+};
+const ICE_SERVERS=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+let fbApp=null,fbDb=null,rtcConn=null,dataChannel=null,peerRole=null,roomId=null,roomRef=null;
+let P2cmdQueue=[];
+let netSeq=0; // sequence number to detect out-of-order packets
+
+function loadFirebase(cb){
+  if(window.firebase){cb();return;}
+  el('peer-msg').textContent='載入 Firebase...';
+  const urls=['https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
+              'https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js'];
+  let n=0;
+  urls.forEach(src=>{
+    const s=document.createElement('script');
+    s.src=src;
+    s.onload=()=>{if(++n===urls.length)cb();};
+    s.onerror=()=>{el('peer-msg').textContent='❌ Firebase 載入失敗';};
+    document.head.appendChild(s);
+  });
+}
+function initFirebase(){if(fbApp)return; fbApp=firebase.initializeApp(FB_CONFIG); fbDb=firebase.database();}
+function makeRoomCode(){return Math.random().toString(36).slice(2,8).toUpperCase();}
+
+function openPeer(role){
+  peerRole=role; cleanupRTC();
+  el('peer-ovl').classList.add('show');
+  el('peer-title').textContent=role==='host'?'── HOST 開房間 ──':'── GUEST 加入 ──';
+  el('peer-room-code').style.display='none';
+  el('peer-input').style.display=role==='guest'?'block':'none';
+  el('peer-connect-btn').style.display='none';
+  el('peer-msg').textContent='初始化...';
+  loadFirebase(()=>{
+    initFirebase();
+    if(role==='host') hostCreate();
+    else{el('peer-msg').textContent='輸入房間碼後按連線';el('peer-connect-btn').style.display='block';}
+  });
+}
+function closePeer(){el('peer-ovl').classList.remove('show');}
+
+async function hostCreate(){
+  roomId=makeRoomCode(); roomRef=fbDb.ref('rooms/'+roomId);
+  await roomRef.remove();
+  el('peer-room-code').textContent=roomId;
+  el('peer-room-code').style.display='block';
+  el('peer-msg').textContent='等待對方輸入房間碼...';
+  rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
+  dataChannel=rtcConn.createDataChannel('game',{ordered:true});
+  setupDataChannel(dataChannel);
+  const ice=[];
+  rtcConn.onicecandidate=e=>{if(e.candidate)ice.push(e.candidate.toJSON());};
+  rtcConn.onicegatheringstatechange=async()=>{
+    if(rtcConn.iceGatheringState==='complete'){
+      await roomRef.child('offer').set({sdp:rtcConn.localDescription.sdp,type:rtcConn.localDescription.type,ice:JSON.stringify(ice)});
+    }
+  };
+  const offer=await rtcConn.createOffer();
+  await rtcConn.setLocalDescription(offer);
+  roomRef.child('answer').on('value',async snap=>{
+    if(!snap.val()||rtcConn.remoteDescription) return;
+    const a=snap.val();
+    await rtcConn.setRemoteDescription({type:a.type,sdp:a.sdp});
+    for(const c of JSON.parse(a.ice||'[]')) await rtcConn.addIceCandidate(new RTCIceCandidate(c));
+    el('peer-msg').textContent='🔗 建立連線中...';
+  });
 }
 
-function cellAt(cx,cy){
-  const wrap=el('map-wrap');
-  const r=wrap.getBoundingClientRect();
-  const gx=Math.floor((cx-r.left+wrap.scrollLeft)/CS);
-  const gy=Math.floor((cy-r.top +wrap.scrollTop )/CS);
-  return inB(gx,gy)?{x:gx,y:gy}:null;
+function guestConnect(){
+  const code=el('peer-input').value.trim().toUpperCase();
+  if(code.length<4){alert('請輸入房間碼');return;}
+  roomId=code; roomRef=fbDb.ref('rooms/'+roomId);
+  el('peer-msg').textContent='讀取房間...';
+  el('peer-connect-btn').style.display='none';
+  roomRef.child('offer').once('value',async snap=>{
+    if(!snap.val()){el('peer-msg').textContent='❌ 找不到房間';el('peer-connect-btn').style.display='block';return;}
+    const o=snap.val();
+    rtcConn=new RTCPeerConnection({iceServers:ICE_SERVERS});
+    rtcConn.ondatachannel=e=>{dataChannel=e.channel;setupDataChannel(dataChannel);};
+    const ice=[];
+    rtcConn.onicecandidate=e=>{if(e.candidate)ice.push(e.candidate.toJSON());};
+    rtcConn.onicegatheringstatechange=async()=>{
+      if(rtcConn.iceGatheringState==='complete'){
+        await roomRef.child('answer').set({sdp:rtcConn.localDescription.sdp,type:rtcConn.localDescription.type,ice:JSON.stringify(ice)});
+        el('peer-msg').textContent='🔗 建立連線中...';
+      }
+    };
+    await rtcConn.setRemoteDescription({type:o.type,sdp:o.sdp});
+    for(const c of JSON.parse(o.ice||'[]')) await rtcConn.addIceCandidate(new RTCIceCandidate(c));
+    const answer=await rtcConn.createAnswer();
+    await rtcConn.setLocalDescription(answer);
+  });
 }
 
-function ptStart(cx,cy){
-  const wrap=el('map-wrap');
-  PT.down=true; PT.moved=false; PT.dragging=false; PT.mode=null;
-  PT.startX=cx; PT.startY=cy;
-  PT.startScrX=wrap.scrollLeft; PT.startScrY=wrap.scrollTop;
+function setupDataChannel(ch){
+  ch.onopen=()=>{
+    el('peer-msg').textContent='✅ 連線成功！';
+    if(roomRef) roomRef.remove();
+    setTimeout(()=>{closePeer(); if(peerRole==='host') startHost(); else startGuest();},600);
+  };
+  ch.onmessage=e=>onPeerMsg(JSON.parse(e.data));
+  ch.onclose=()=>glog('⚠️ 對方斷線');
+  ch.onerror=()=>glog('❌ 連線錯誤');
 }
-function ptMove(cx,cy){
-  if(!PT.down) return false;
-  const dx=cx-PT.startX, dy=cy-PT.startY;
-  if(Math.abs(dx)<10&&Math.abs(dy)<10) return false;
-  PT.moved=true;
-  // Only drag-select when boxMode is explicitly ON; otherwise always scroll
-  if(!PT.mode) PT.mode = SEL.boxMode ? 'drag' : 'scroll';
-  if(PT.mode==='drag'){ PT.dragging=true; updateDragBox(cx,cy); }
-  else { const w=el('map-wrap'); w.scrollLeft=PT.startScrX-dx; w.scrollTop=PT.startScrY-dy; }
+function sendRaw(obj){if(dataChannel&&dataChannel.readyState==='open') dataChannel.send(JSON.stringify(obj));}
+function cleanupRTC(){
+  if(dataChannel){try{dataChannel.close();}catch(e){} dataChannel=null;}
+  if(rtcConn){try{rtcConn.close();}catch(e){} rtcConn=null;}
+  if(roomRef){try{roomRef.remove();}catch(e){} roomRef=null;}
+  P2cmdQueue=[];
+}
+
+// ── Network serialization (compact delta format) ──
+// Only send fields that Guest needs: position, hp, action state
+// Buildings: id,type,owner,x,y,hp,uc,bp,bt,tq,tp
+// Units:     id,type,owner,x,y,hp,act,tgt
+const BF=['id','type','owner','x','y','hp','uc','bp','bt','tq','tp'];
+const UF=['id','type','owner','x','y','hp','act','tgt'];
+function packB(b){return BF.map(f=>b[f]);}
+function packU(u){return UF.map(f=>u[f]);}
+function unpackB(a){const o={};BF.forEach((f,i)=>{o[f]=a[i];});o.mhp=BD[o.type]?.hp||100;return o;}
+function unpackU(a){const o={};UF.forEach((f,i)=>{o[f]=a[i];});
+  const d=UD[o.type]||{}; o.mhp=d.hp||50; o.atk=d.atk||1; o.def=d.def||0; o.rng=d.rng||1; o.vis=d.vis||2; o.food=d.food||0;
+  return o;}
+
+// Fog compression: encode as base64-like run-length
+function packFog(fogArr){
+  const out=[];
+  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++) out.push(fogArr[y][x]);
+  return out;
+}
+function unpackFog(arr){
+  const fog=[];
+  for(let y=0;y<MH;y++){fog.push(new Uint8Array(MW)); for(let x=0;x<MW;x++) fog[y][x]=arr[y*MW+x];}
+  return fog;
+}
+
+let hostMapSent=false;
+function sendToGuest(){
+  const payload={
+    t:'s', seq:++netSeq,
+    k:G.tick, o:G.over, w:G.winner,
+    r:G.res,
+    f:packFog(G.fog[1]),  // P2 fog only
+    b:G.bldgs.map(packB),
+    u:G.units.map(packU),
+  };
+  if(!hostMapSent){payload.m=G.map; hostMapSent=true;}
+  sendRaw(payload);
+}
+
+let lastSeq=0;
+function onPeerMsg(msg){
+  if(gameMode==='host'&&msg.t==='cmd'){P2cmdQueue.push(msg.cmd);return;}
+  if(msg.t==='s'){
+    // Drop out-of-order packets
+    if(msg.seq<=lastSeq) return;
+    lastSeq=msg.seq;
+
+    if(msg.m) G.map=msg.m;
+    G.fog=[[],unpackFog(msg.f)]; // index 1 = P2 fog
+    G.tick=msg.k; G.over=msg.o; G.winner=msg.w;
+    G.res=msg.r;
+    G.bldgs=msg.b.map(unpackB);
+    G.units=msg.u.map(unpackU);
+    G.myP=2;
+
+    el('h-tick').textContent='T'+G.tick;
+    updateHUD(); render();
+    if(G.over) showWin();
+  }
+}
+
+function sendCmd(cmd){if(gameMode==='guest') sendRaw({t:'cmd',cmd});}
+
+function applyCmd(cmd,owner){
+  if(cmd.act==='move'){
+    const us=G.units.filter(u=>cmd.ids.includes(u.id)&&u.owner===owner);
+    assignSpreadMove(us,cmd.tx,cmd.ty);
+  } else if(cmd.act==='attack'){
+    G.units.filter(u=>cmd.ids.includes(u.id)&&u.owner===owner).forEach(u=>{u.act='attack';u.tgt=cmd.tgt;});
+  } else if(cmd.act==='harvest'){
+    G.units.filter(u=>cmd.ids.includes(u.id)&&u.owner===owner).forEach(u=>{u.act='harvest';u.tgt=[cmd.tx,cmd.ty];});
+  } else if(cmd.act==='repair'){
+    G.units.filter(u=>cmd.ids.includes(u.id)&&u.owner===owner).forEach(u=>{u.act='repair';u.tgt=cmd.tgt;});
+  } else if(cmd.act==='build'){
+    const d=BD[cmd.btype],p=G.res[owner];
+    if(p.gold>=d.cost.g&&p.wood>=d.cost.w&&canBuild(cmd.tx,cmd.ty)){
+      p.gold-=d.cost.g; p.wood-=d.cost.w;
+      addBldg(cmd.btype,owner,cmd.tx,cmd.ty,true);
+      const w=G.units.find(u=>cmd.ids.includes(u.id)&&u.type==='worker');
+      if(w){w.act='move';w.tgt=[cmd.tx,cmd.ty];}
+    }
+  } else if(cmd.act==='train'){
+    const b=G.bldgs.find(b=>b.id===cmd.bid&&b.owner===owner);
+    if(!b) return;
+    const p=G.res[owner],cost=UD[cmd.utype].cost.g;
+    if(p.gold>=cost&&(cmd.utype==='worker'||p.food<p.foodMax)){p.gold-=cost;b.tq.push(cmd.utype);}
+  }
+}
+
+// ════════════════════════════════════
+// GAME INIT
+// ════════════════════════════════════
+function startSolo(){gameMode='solo'; initGame(1);}
+function startHost(){gameMode='host'; initGame(1); hostMapSent=false; netSeq=0;
+  clearInterval(tickTmr);
+  tickTmr=setInterval(()=>{
+    if(G.over){clearInterval(tickTmr);return;}
+    P2cmdQueue.splice(0).forEach(cmd=>applyCmd(cmd,2));
+    tick(); sendToGuest();
+  },TICK_MS);
+  glog('✅ Host 已連線，遊戲開始！');
+}
+function startGuest(){
+  gameMode='guest'; lastSeq=0;
+  initGame(2);
+  el('speed-btn').style.display='none';
+  clearInterval(tickTmr); tickTmr=null;
+  setTimeout(()=>{const w=el('map-wrap');w.scrollLeft=MW*CS-w.clientWidth;w.scrollTop=Math.max(0,10*CS-w.clientHeight/2);},50);
+  glog('✅ Guest 已連線，等待遊戲資料...');
+}
+
+function initGame(myP){
+  clearInterval(tickTmr);
+  G=newG(myP);
+  speedLv=1; el('speed-btn').textContent='1x';
+  buildMap(); buildTileIndex(); placeStart();
+  fogRevealers={1:[],2:[]};
+  updateFog();
+  buildDOM(); updateHUD(); render(); resetSel();
+  el('menu').style.display='none';
+  el('game').style.display='flex';
+  setTimeout(()=>{
+    const w=el('map-wrap');
+    if(myP===1){w.scrollLeft=0;w.scrollTop=Math.max(0,9*CS-w.clientHeight/2);}
+    else{w.scrollLeft=MW*CS-w.clientWidth;w.scrollTop=Math.max(0,10*CS-w.clientHeight/2);}
+  },50);
+  if(gameMode==='solo'){
+    glog('點選👷Worker開始 → 點💰採金 / 點空地移動 / 點建築建造');
+    tickTmr=setInterval(()=>{tick();if(G.over)clearInterval(tickTmr);},TICK_MS);
+  }
+}
+
+function buildMap(){
+  G.map=[];
+  for(let y=0;y<MH;y++){G.map.push([]); for(let x=0;x<MW;x++) G.map[y].push(T.E);}
+  initFog();
+  [[5,5],[6,5],[5,6],[7,8],[8,8],[16,11],[17,11],[16,12],[11,9],[12,9],[11,10]].forEach(([x,y])=>setTile(x,y,T.M));
+  [[3,2],[4,3],[3,4],[17,15],[18,16],[17,14],[8,3],[9,4],[14,14],[15,15],[6,9],[7,10],[13,8],[14,9],[10,3],[11,4],[13,16],[14,17]].forEach(([x,y])=>setTile(x,y,T.W));
+  [[2,2],[20,2],[2,17],[20,17],[11,7],[11,13]].forEach(([x,y])=>setTile(x,y,T.G));
+}
+function setTile(x,y,t){if(inB(x,y))G.map[y][x]=t;}
+
+function placeStart(){
+  addBldg('townhall',1,1,9); addBldg('townhall',2,22,10);
+  addUnit('worker',1,2,9); addUnit('worker',1,1,10);
+  addUnit('worker',2,21,10); addUnit('worker',2,22,9);
+}
+
+function addBldg(type,owner,x,y,uc=false){
+  const d=BD[type];
+  const id='b'+G.bc++;
+  G.bldgs.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,uc,bp:uc?0:d.bt,bt:d.bt,tq:[],tp:0});
+  if(d.food&&!uc) G.res[owner].foodMax+=d.food;
+  return id;
+}
+
+function addUnit(type,owner,x,y){
+  const d=UD[type];
+  const pk=type[0];
+  G.uc[owner][pk]++;
+  const id=pk+G.uc[owner][pk]+'p'+owner;
+  G.units.push({id,type,owner,x,y,hp:d.hp,mhp:d.hp,atk:d.atk,def:d.def||0,rng:d.rng,vis:d.vis,food:d.food,act:null,tgt:null});
+  G.res[owner].food+=d.food;
+  return id;
+}
+
+// ════════════════════════════════════
+// TICK
+// ════════════════════════════════════
+function tick(){
+  if(G.over) return;
+  G.tick++;
+  el('h-tick').textContent='T'+G.tick;
+
+  buildPosMap(); // O(N) once per tick, enables O(1) lookups below
+  const dead=new Set();
+
+  G.units.forEach(u=>{
+    if(u.act==='move'&&u.tgt){
+      const [tx,ty]=u.tgt;
+      if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;}
+      const s=step(u.x,u.y,tx,ty,u.id);
+      if(s){
+        delete posMap[`${u.x},${u.y}`];
+        u.x=s[0];u.y=s[1];
+        posMap[`${u.x},${u.y}`]=u;
+      } else {u.act=null;u.tgt=null;}
+    }
+    else if(u.act==='harvest'&&u.tgt){
+      const [tx,ty]=u.tgt;
+      const dist=Math.abs(u.x-tx)+Math.abs(u.y-ty);
+      if(dist<=1){
+        const t=G.map[ty]?.[tx];
+        if(t===T.G) G.res[u.owner].gold+=4;
+        else if(t===T.W) G.res[u.owner].wood+=3;
+      } else {
+        const s=step(u.x,u.y,tx,ty,u.id);
+        if(s){delete posMap[`${u.x},${u.y}`];u.x=s[0];u.y=s[1];posMap[`${u.x},${u.y}`]=u;}
+        else{u.act=null;u.tgt=null;}
+      }
+    }
+    else if(u.act==='repair'&&u.tgt){
+      const bldg=G.bldgs.find(b=>b.id===u.tgt);
+      if(!bldg||bldg.hp>=bldg.mhp){u.act=null;u.tgt=null;return;}
+      if(Math.abs(u.x-bldg.x)+Math.abs(u.y-bldg.y)<=1){
+        if(G.res[u.owner].gold>0){
+          G.res[u.owner].gold--;
+          bldg.hp=Math.min(bldg.mhp,bldg.hp+3);
+          if(bldg.hp>=bldg.mhp){glog('✅ '+bldg.type+' 修復完成');u.act=null;u.tgt=null;}
+        }
+      } else {
+        const s=step(u.x,u.y,bldg.x,bldg.y,u.id);
+        if(s){delete posMap[`${u.x},${u.y}`];u.x=s[0];u.y=s[1];posMap[`${u.x},${u.y}`]=u;}
+        else{u.act=null;u.tgt=null;}
+      }
+    }
+    else if(u.act==='attack'&&u.tgt){
+      const tgt=byId(u.tgt);
+      if(!tgt){u.act=null;u.tgt=null;return;}
+      const dist=Math.abs(u.x-tgt.x)+Math.abs(u.y-tgt.y);
+      if(dist<=u.rng){
+        const dmg=Math.max(1,u.atk-(tgt.def||0));
+        tgt.hp-=dmg;
+        if(G.tick%3===0) hitFx(tgt.x,tgt.y);
+        if(tgt.hp<=0) dead.add(tgt.id);
+      } else {
+        const s=step(u.x,u.y,tgt.x,tgt.y,u.id);
+        if(s){delete posMap[`${u.x},${u.y}`];u.x=s[0];u.y=s[1];posMap[`${u.x},${u.y}`]=u;}
+      }
+    }
+    else if(!u.act&&(u.type==='soldier'||u.type==='archer')){
+      // Auto-attack: only enemies in vision range
+      const enemy=3-u.owner;
+      let nearest=null,nearestD=999;
+      for(const e of [...G.units.filter(v=>v.owner===enemy),...G.bldgs.filter(v=>v.owner===enemy)]){
+        if(!canSee(u.owner,e.x,e.y)) continue;
+        const d=Math.abs(u.x-e.x)+Math.abs(u.y-e.y);
+        if(d<nearestD){nearestD=d;nearest=e;}
+      }
+      if(nearest){u.act='attack';u.tgt=nearest.id;}
+    }
+  });
+
+  // Tower auto-attack
+  for(const tw of G.bldgs.filter(b=>b.type==='tower'&&!b.uc)){
+    for(const u of G.units){
+      if(u.owner===tw.owner) continue;
+      if(Math.abs(u.x-tw.x)+Math.abs(u.y-tw.y)>BD.tower.rng) continue;
+      if(!canSee(tw.owner,u.x,u.y)) continue;
+      const dmg=Math.max(1,BD.tower.atk-(u.def||0));
+      u.hp-=dmg; hitFx(u.x,u.y);
+      if(u.hp<=0) dead.add(u.id);
+      break; // one target per tower per tick
+    }
+  }
+
+  // Kill dead
+  dead.forEach(id=>{
+    const ui=G.units.findIndex(u=>u.id===id);
+    if(ui!==-1){
+      const u=G.units[ui];
+      G.res[u.owner].food-=u.food;
+      delete posMap[`${u.x},${u.y}`];
+      glog('💀 '+dsp(u)+' 陣亡');
+      G.units.splice(ui,1);
+      SEL.selUnits=SEL.selUnits.filter(v=>v.id!==id);
+    }
+    const bi=G.bldgs.findIndex(b=>b.id===id);
+    if(bi!==-1){
+      const b=G.bldgs[bi];
+      if(b.type==='townhall'){G.over=true;G.winner=b.owner===1?2:1;showWin();}
+      if(b.type==='farm'&&!b.uc) G.res[b.owner].foodMax-=BD.farm.food;
+      glog('💥 '+dsp(b)+' 被摧毀');
+      G.bldgs.splice(bi,1);
+      if(SEL.selBldg?.id===id) resetSel();
+    }
+  });
+
+  // Building progress
+  for(const b of G.bldgs){
+    if(b.uc&&b.bp<b.bt){
+      b.bp++;
+      if(b.bp>=b.bt){
+        b.uc=false;
+        glog('✅ '+b.type+' 建造完成 ('+cs(b.x,b.y)+')');
+        if(BD[b.type].food) G.res[b.owner].foodMax+=BD[b.type].food;
+        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
+      }
+    }
+    if(!b.uc&&b.tq.length>0){
+      b.tp++;
+      const need=b.tq[0]==='worker'?12:b.tq[0]==='soldier'?10:14;
+      if(b.tp>=need){
+        const ut=b.tq.shift(); b.tp=0;
+        const pos=nearEmpty(b.x,b.y);
+        if(pos){addUnit(ut,b.owner,pos[0],pos[1]); glog('🎖️ '+ut+' 訓練完成');}
+        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
+      }
+    } else if(!b.uc&&b.tq.length===0) b.tp=0;
+  }
+
+  updateFog(); updateHUD(); render();
+}
+
+// ════════════════════════════════════
+// PATHFINDING — O(1) collision check via posMap
+// ════════════════════════════════════
+function canWalk(x,y){
+  if(!inB(x,y)) return false;
+  const t=G.map[y][x];
+  if(t===T.M||t===T.G||t===T.W) return false;
+  if(G.bldgs.find(b=>b.x===x&&b.y===y)) return false;
   return true;
 }
-function ptEnd(cx,cy){
-  if(!PT.down) return;
-  PT.down=false;
-  el('dragbox').style.display='none';
-  if(PT.dragging) finalizeDrag(cx,cy);
-  else if(!PT.moved){ const c=cellAt(cx,cy); if(c) onTap(c.x,c.y); }
-  PT.dragging=false; PT.mode=null;
+function canBuild(x,y){
+  if(!inB(x,y)||G.map[y][x]!==T.E) return false;
+  return !G.bldgs.find(b=>b.x===x&&b.y===y);
 }
-
-function onTS(e){ if(e.touches.length>1){PT.down=false;return;} e.preventDefault(); const t=e.touches[0]; ptStart(t.clientX,t.clientY); }
-function onTM(e){ if(!PT.down) return; e.preventDefault(); const t=e.touches[0]; ptMove(t.clientX,t.clientY); }
-function onTE(e){ if(!PT.down) return; const t=e.changedTouches[0]; ptEnd(t.clientX,t.clientY); }
-function onMD(e){ if(e.button!==0) return; ptStart(e.clientX,e.clientY); }
-function onMM(e){ ptMove(e.clientX,e.clientY); }
-function onMU(e){ ptEnd(e.clientX,e.clientY); }
-
-function updateDragBox(cx,cy){
-  const db=el('dragbox');
-  const wrap=el('map-wrap');
-  const r=wrap.getBoundingClientRect();
-  const ax=Math.min(PT.startX,cx)-r.left+wrap.scrollLeft;
-  const ay=Math.min(PT.startY,cy)-r.top +wrap.scrollTop;
-  const bx=Math.max(PT.startX,cx)-r.left+wrap.scrollLeft;
-  const by=Math.max(PT.startY,cy)-r.top +wrap.scrollTop;
-  db.style.display='block';
-  db.style.left=ax+'px'; db.style.top=ay+'px';
-  db.style.width=(bx-ax)+'px'; db.style.height=(by-ay)+'px';
+function step(fx,fy,tx,ty,selfId){
+  const dx=tx-fx,dy=ty-fy;
+  if(!dx&&!dy) return null;
+  const sx=dx>0?1:dx<0?-1:0, sy=dy>0?1:dy<0?-1:0;
+  const cands=Math.abs(dx)>=Math.abs(dy)
+    ?[[fx+sx,fy],[fx,fy+sy],[fx+sx,fy+sy]]
+    :[[fx,fy+sy],[fx+sx,fy],[fx+sx,fy+sy]];
+  for(const [nx,ny] of cands){
+    if(!canWalk(nx,ny)) continue;
+    if(posMap[`${nx},${ny}`]&&posMap[`${nx},${ny}`].id!==selfId) continue; // O(1) lookup
+    return [nx,ny];
+  }
+  return null;
 }
-
-function finalizeDrag(ex,ey){
-  const wrap=el('map-wrap');
-  const r=wrap.getBoundingClientRect();
-  const ax=Math.min(PT.startX,ex)-r.left+wrap.scrollLeft;
-  const ay=Math.min(PT.startY,ey)-r.top +wrap.scrollTop;
-  const bx=Math.max(PT.startX,ex)-r.left+wrap.scrollLeft;
-  const by=Math.max(PT.startY,ey)-r.top +wrap.scrollTop;
-  const gx0=Math.floor(ax/CS),gy0=Math.floor(ay/CS);
-  const gx1=Math.floor(bx/CS),gy1=Math.floor(by/CS);
-  const sel=G.units.filter(u=>u.owner===(G.myP||1)&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
-  setBoxMode(false); // always exit box mode after drag
-  if(sel.length>0){
-    SEL.phase='sel'; SEL.selUnits=sel; SEL.selBldg=null;
-    showMultiPanel(sel);
-  } else resetSel();
-  render();
+function nearestTile(cx,cy,tiles){
+  let best=null,bd=999;
+  for(const [x,y] of tiles){const d=Math.abs(x-cx)+Math.abs(y-cy);if(d<bd){bd=d;best=[x,y];}}
+  return best;
+}
+function nearEmpty(cx,cy,r=4){
+  for(let rd=1;rd<=r;rd++) for(let dy=-rd;dy<=rd;dy++) for(let dx=-rd;dx<=rd;dx++){
+    const x=cx+dx,y=cy+dy;
+    if(canBuild(x,y)&&!posMap[`${x},${y}`]) return [x,y];
+  }
+  return null;
+}
+function assignSpreadMove(units,cx,cy){
+  const cands=[];
+  for(let r=0;r<=4;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
+    const nx=cx+dx,ny=cy+dy;
+    if(canWalk(nx,ny)) cands.push([nx,ny,Math.abs(dx)+Math.abs(dy)]);
+  }
+  cands.sort((a,b)=>a[2]-b[2]);
+  const sorted=[...units].sort((a,b)=>(Math.abs(a.x-cx)+Math.abs(a.y-cy))-(Math.abs(b.x-cx)+Math.abs(b.y-cy)));
+  const used=new Set(G.units.filter(u=>!units.find(v=>v.id===u.id)).map(u=>`${u.x},${u.y}`));
+  sorted.forEach(u=>{
+    const spot=cands.find(([nx,ny])=>!used.has(`${nx},${ny}`));
+    if(spot){used.add(`${spot[0]},${spot[1]}`);u.act='move';u.tgt=[spot[0],spot[1]];}
+    else{u.act=null;u.tgt=null;}
+  });
 }
 
 // ════════════════════════════════════
-// TAP LOGIC  ← core "tap cell then see actions"
+// SELECTION STATE
 // ════════════════════════════════════
-function onTap(x,y){
-  if(!G.map||!G.map[y]) return; // guard: map not yet received
-  const myP=G.myP||1;
-  const f=fog1(x,y);
-  const terrain=G.map[y][x];
-  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===myP);
-  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===myP);
-  const enBldg=f==='v'?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner!==myP):null;
-  const enUnit=f==='v'?G.units.find(u=>u.x===x&&u.y===y&&u.owner!==myP):null;
-
-  // ── BUILD PLACEMENT PHASE ──
-  if(SEL.phase==='build_place'){
-    if(canBuild(x,y)) execBuild(x,y);
-    else glog('❌ 無法在此建造（非空地）');
-    // keep worker selected after build placement
-    const w=SEL.selUnits.find(u=>u.type==='worker');
-    if(w){ SEL.phase='sel'; SEL.buildType=null; showUnitPanel(w); render(); }
-    else resetSel();
-    return;
-  }
-
-  // ── HAVE SELECTED UNITS ──
-  if(SEL.selUnits.length>0){
-    const units=SEL.selUnits;
-
-    // Tap own unit → switch selection (check BEFORE move so clicking another unit selects it)
-    if(myUnit){ selectUnit(myUnit); return; }
-    if(myBldg){ selectBldg(myBldg); return; }
-
-    // Tap enemy → attack (keep selection)
-    if(enUnit||enBldg){
-      const tgt=enUnit||enBldg;
-      multiAttack(units, tgt.id);
-      glog(`⚔️ ${units.length}個單位攻擊 ${dsp(tgt)}`);
-      refreshSelPanel(); return;
-    }
-
-    // Tap own damaged building with workers → offer repair
-    if(myBldg&&myBldg.hp<myBldg.mhp){
-      const wks=units.filter(u=>u.type==='worker');
-      if(wks.length>0){
-        multiRepair(wks, myBldg.id);
-        glog(`🔧 ${wks.length}個Worker → 修復 ${myBldg.type}`);
-        refreshSelPanel(); return;
-      }
-    }
-
-    // Tap gold/tree with workers → harvest (keep selection)
-    if(terrain===T.G||terrain===T.W){
-      const wks=units.filter(u=>u.type==='worker');
-      if(wks.length>0){
-        multiHarvest(wks,[x,y]);
-        glog(`⛏️ ${wks.length}個Worker採集${terrain===T.G?'💰':'🌲'}`);
-        refreshSelPanel(); return;
-      }
-    }
-
-    // Tap walkable cell → move (keep selection)
-    if(canWalk(x,y)){
-      multiMove(units, x, y);
-      glog(`🚶 ${units.length}個單位→${cs(x,y)}`);
-      refreshSelPanel(); return;
-    }
-
-    // Tap nothing useful → deselect
-    resetSel(); return;
-  }
-
-  // ── NOTHING SELECTED ──
-  if(myUnit){ selectUnit(myUnit); return; }
-  if(myBldg){ selectBldg(myBldg); return; }
-
-  // Info-only taps
-  if(enUnit||enBldg){
-    const e=enUnit||enBldg;
-    setInfo('👁️',`敵方 ${IC['e_'+e.type]||e.type}`,`HP ${e.hp}/${e.mhp}`,'');
-    setActions(`<span class="hint">先選我方士兵，再點此敵人攻擊</span>`); return;
-  }
-  if(terrain===T.G){setInfo('💎','金礦','可採集','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
-  if(terrain===T.W){setInfo('🌳','樹林','可砍伐','');setActions(`<span class="hint">先選👷Worker，再點此採集</span>`);return;}
-  if(terrain===T.M){setInfo('⛰️','山地','不可通行','');setActions('');return;}
-  if(f==='h'){setInfo('❓','未探索','','');setActions('');return;}
-
-  resetSel();
-}
-
-// Refresh bottom panel without clearing selection
-function refreshSelPanel(){
-  if(SEL.selUnits.length===1) selectUnit(SEL.selUnits[0]);
-  else if(SEL.selUnits.length>1) showMultiPanel(SEL.selUnits);
-  else if(SEL.selBldg) selectBldg(SEL.selBldg);
-  render();
-}
-
-// ════════════════════════════════════
-// SELECT + PANELS
-// ════════════════════════════════════
-function selectUnit(u){
-  SEL.phase='sel'; SEL.selUnits=[u]; SEL.selBldg=null;
-  const myP=G.myP||1;
-  const label=u.owner!==myP?(IC['e_'+u.type]||'敵單位'):(IC[u.type]||u.type);
-  setInfo('⚔️', label, `HP ${u.hp}/${u.mhp}  DEF ${u.def||0}`, stateStr(u));
-  showUnitPanel(u);
-  render();
-}
-
-function selectBldg(b){
-  SEL.phase='sel'; SEL.selUnits=[]; SEL.selBldg=b;
-  const myP=G.myP||1;
-  const label=b.owner!==myP?(IC['e_'+b.type]||'敵建築'):(IC[b.type]||b.type);
-  setInfo('🏛️', label+(b.uc?' (建造中)':''), `HP ${b.hp}/${b.mhp}`, b.tq?.length?`隊列:${b.tq.length}`:'');
-  showBldgPanel(b);
-  render();
-}
-
-function showUnitPanel(u){
-  const p=G.res[G.myP||1]; let html='';
-  if(u.type==='worker'){
-    html+=`<span class="hint">點地圖移動・點💰🌲採集・點受損建築修復・點敵人攻擊</span>`;
-    html+=mkAbtn('🌾 建農場', '60🪙30🌲', p.gold>=60&&p.wood>=30, `startBuild('farm')`);
-    html+=mkAbtn('⚔️ 建兵營', '120🪙50🌲', p.gold>=120&&p.wood>=50, `startBuild('barracks')`);
-    html+=mkAbtn('🗼 建箭塔', '100🪙80🌲', p.gold>=100&&p.wood>=80, `startBuild('tower')`);
-  } else {
-    html+=`<span class="hint">點地圖移動・點敵人/建築攻擊</span>`;
-  }
-  html+=`<button class="ab" onclick="resetSel()">取消選擇</button>`;
-  setActions(html);
-  setInfo('⚔️', IC[u.type]||u.type, `HP ${u.hp}/${u.mhp}  DEF ${u.def||0}`, stateStr(u));
-}
-
-function showBldgPanel(b){
-  if(b.uc){
-    setActions(`<span class="hint">建造中 ${b.bp}/${b.bt} ticks</span><button class="ab" onclick="resetSel()">關閉</button>`);
-    return;
-  }
-  const p=G.res[G.myP||1]; let html='';
-  if(b.type==='townhall'){
-    html+=mkAbtn('👷 訓練Worker','50🪙', p.gold>=50, `doTrain('${b.id}','worker')`);
-  }
-  if(b.type==='barracks'){
-    const hf=p.food<p.foodMax;
-    html+=mkAbtn('🗡️ 士兵','80🪙', p.gold>=80&&hf, `doTrain('${b.id}','soldier')`);
-    html+=mkAbtn('🏹 弓手','100🪙', p.gold>=100&&hf, `doTrain('${b.id}','archer')`);
-    if(!hf) html+=`<span class="hint" style="color:var(--r)">⚠️ 食物已滿，請先建農場</span>`;
-    if(b.tq.length) html+=`<span class="hint">訓練隊列: ${b.tq.join(',')} (${b.tp}tick)</span>`;
-  }
-  if(b.type==='farm') html+=`<span class="hint">提供 +5 食物上限</span>`;
-  if(b.type==='tower') html+=`<span class="hint">自動攻擊 ${BD.tower.rng} 格內敵人 (ATK ${BD.tower.atk})</span>`;
-  html+=`<button class="ab" onclick="resetSel()">關閉</button>`;
-  setActions(html);
-}
-
-function showMultiPanel(units){
-  const t=[...new Set(units.map(u=>u.type))].join('+');
-  setInfo('⚔️',`${units.length}個單位 (${t})`,'點地圖移動・點敵人攻擊','');
-  setActions(`<span class="hint">點空地移動・點敵人攻擊</span><button class="ab" onclick="resetSel()">取消</button>`);
-  render();
-}
-
-function startBuild(type){
-  SEL.buildType=type; SEL.phase='build_place';
-  setInfo('🏗️','選擇建造位置','點綠色高亮的空地','');
-  setActions(`<span class="hint">點空地 (綠框) 放置 ${type}</span><button class="ab" onclick="resetSel()">取消</button>`);
-  render();
-}
-
-function execBuild(x,y){
-  const type=SEL.buildType;
-  if(!canBuild(x,y)){glog('❌ 位置被佔用');return;}
-  const worker=SEL.selUnits.find(u=>u.type==='worker');
-  if(!worker){glog('❌ 需要Worker');return;}
-  // 5x5 range: distance ≤ 2 from worker
-  if(Math.abs(x-worker.x)>2||Math.abs(y-worker.y)>2){
-    glog('❌ 超出建造範圍（Worker 5×5 格內）');return;
-  }
-  multiBuild(SEL.selUnits, type, [x,y]);
-}
-
-function doTrain(bldgId,utype){
-  multiTrain(bldgId,utype);
-}
-
-function setBoxMode(on){
-  SEL.boxMode=on;
-  const btn=el('box-btn');
-  if(!btn) return;
-  if(on){
-    btn.textContent='✕ 取消框選';
-    btn.style.borderColor='var(--y)';
-    btn.style.color='var(--y)';
-  } else {
-    btn.textContent='⬚ 框選';
-    btn.style.borderColor='';
-    btn.style.color='';
-  }
-}
-
-function toggleBoxMode(){
-  setBoxMode(!SEL.boxMode);
-}
+let SEL={phase:'idle',selUnits:[],selBldg:null,buildType:null,boxMode:false};
 
 function resetSel(){
-  // Clear highlight tracking before resetting selection
   prevSelKeys.forEach(k=>CE[k]?.el.classList.remove('h-sel'));
   prevBuildKeys.forEach(k=>CE[k]?.el.classList.remove('h-build'));
   prevSelKeys=new Set(); prevBuildKeys=new Set();
@@ -1357,336 +1110,313 @@ function resetSel(){
 }
 
 // ════════════════════════════════════
-// TICK
+// POINTER HANDLING
 // ════════════════════════════════════
-function tick(){
-  if(G.over) return;
-  G.tick++;
-  el('h-tick').textContent='T'+G.tick;
+let PT={down:false,startX:0,startY:0,startScrX:0,startScrY:0,moved:false,dragging:false,mode:null};
 
-  const dead=new Set();
+function setupPointer(){
+  const wrap=el('map-wrap');
+  wrap.addEventListener('touchstart',onTS,{passive:false});
+  wrap.addEventListener('touchmove', onTM,{passive:false});
+  wrap.addEventListener('touchend',  onTE,{passive:false});
+  wrap.addEventListener('mousedown', onMD);
+  wrap.addEventListener('mousemove', onMM);
+  wrap.addEventListener('mouseup',   onMU);
+}
+function cellAt(cx,cy){
+  const wrap=el('map-wrap'),r=wrap.getBoundingClientRect();
+  const gx=Math.floor((cx-r.left+wrap.scrollLeft)/CS);
+  const gy=Math.floor((cy-r.top+wrap.scrollTop)/CS);
+  return inB(gx,gy)?{x:gx,y:gy}:null;
+}
+function ptStart(cx,cy){
+  const wrap=el('map-wrap');
+  PT.down=true;PT.moved=false;PT.dragging=false;PT.mode=null;
+  PT.startX=cx;PT.startY=cy;PT.startScrX=wrap.scrollLeft;PT.startScrY=wrap.scrollTop;
+}
+function ptMove(cx,cy){
+  if(!PT.down) return;
+  const dx=cx-PT.startX,dy=cy-PT.startY;
+  if(Math.abs(dx)<10&&Math.abs(dy)<10) return;
+  PT.moved=true;
+  if(!PT.mode) PT.mode=SEL.boxMode?'drag':'scroll';
+  if(PT.mode==='drag'){PT.dragging=true;updateDragBox(cx,cy);}
+  else{const w=el('map-wrap');w.scrollLeft=PT.startScrX-dx;w.scrollTop=PT.startScrY-dy;}
+}
+function ptEnd(cx,cy){
+  if(!PT.down) return; PT.down=false;
+  el('dragbox').style.display='none';
+  if(PT.dragging) finalizeDrag(cx,cy);
+  else if(!PT.moved){const c=cellAt(cx,cy);if(c) onTap(c.x,c.y);}
+  PT.dragging=false;PT.mode=null;
+}
+function onTS(e){if(e.touches.length>1){PT.down=false;return;}e.preventDefault();const t=e.touches[0];ptStart(t.clientX,t.clientY);}
+function onTM(e){if(!PT.down)return;e.preventDefault();const t=e.touches[0];ptMove(t.clientX,t.clientY);}
+function onTE(e){if(!PT.down)return;const t=e.changedTouches[0];ptEnd(t.clientX,t.clientY);}
+function onMD(e){if(e.button!==0)return;ptStart(e.clientX,e.clientY);}
+function onMM(e){ptMove(e.clientX,e.clientY);}
+function onMU(e){ptEnd(e.clientX,e.clientY);}
 
-  // Unit actions
-  G.units.forEach(u=>{
-    if(u.act==='move'&&u.tgt){
-      const [tx,ty]=u.tgt;
-      if(u.x===tx&&u.y===ty){u.act=null;u.tgt=null;return;} // arrived
-      const s=step(u.x,u.y,tx,ty,u.id);
-      if(s){ u.x=s[0]; u.y=s[1]; }
-      else { u.act=null; u.tgt=null; }
-    }
-    else if(u.act==='harvest'&&u.tgt){
-      const [tx,ty]=u.tgt;
-      const dist=Math.abs(u.x-tx)+Math.abs(u.y-ty);
-      if(dist<=1){
-        const t=G.map[ty]?.[tx];
-        if(t===T.G) G.res[u.owner].gold+=4;
-        else if(t===T.W) G.res[u.owner].wood+=3;
-      } else {
-        const s=step(u.x,u.y,tx,ty,u.id);
-        if(s){u.x=s[0];u.y=s[1];}
-        else { u.act=null; u.tgt=null; }
-      }
-    }
-    else if(u.act==='repair'&&u.tgt){
-      const bldg=G.bldgs.find(b=>b.id===u.tgt);
-      if(!bldg||bldg.hp>=bldg.mhp){u.act=null;u.tgt=null;return;} // done or destroyed
-      const dist=Math.abs(u.x-bldg.x)+Math.abs(u.y-bldg.y);
-      if(dist<=1){
-        // repair costs 1 gold/tick per worker
-        if(G.res[u.owner].gold>0){
-          G.res[u.owner].gold-=1;
-          bldg.hp=Math.min(bldg.mhp, bldg.hp+3);
-          if(bldg.hp>=bldg.mhp){ glog(`✅ ${bldg.type} 修復完成`); u.act=null; u.tgt=null; }
-        }
-      } else {
-        const s=step(u.x,u.y,bldg.x,bldg.y,u.id);
-        if(s){u.x=s[0];u.y=s[1];}
-        else {u.act=null;u.tgt=null;}
-      }
-    }
-    else if(u.act==='attack'&&u.tgt){
-      const tgt=byId(u.tgt);
-      if(!tgt){u.act=null;u.tgt=null;return;}
-      const dist=Math.abs(u.x-tgt.x)+Math.abs(u.y-tgt.y);
-      if(dist<=u.rng){
-        // Apply target's defense: damage = max(1, atk - def)
-        const dmg=Math.max(1, u.atk - (tgt.def||0));
-        tgt.hp-=dmg;
-        if(G.tick%3===0) hitFx(tgt.x,tgt.y);
-        if(tgt.hp<=0) dead.add(tgt.id);
-      } else {
-        const s=step(u.x,u.y,tgt.x,tgt.y,u.id);
-        if(s){u.x=s[0];u.y=s[1];}
-      }
-    }
-    else if(!u.act && (u.type==='soldier'||u.type==='archer')){
-      // ── AUTO-ATTACK: scan vision for nearest enemy ──
-      const enemy = 3 - u.owner;
-      let nearest=null, nearestDist=999;
-      const targets=[
-        ...G.units.filter(e=>e.owner===enemy),
-        ...G.bldgs.filter(e=>e.owner===enemy),
-      ];
-      targets.forEach(e=>{
-        if(!canSee(u.owner, e.x, e.y)) return;
-        const d=Math.abs(u.x-e.x)+Math.abs(u.y-e.y);
-        if(d<nearestDist){ nearestDist=d; nearest=e; }
-      });
-      if(nearest){ u.act='attack'; u.tgt=nearest.id; }
-    }
-  });
-
-  // Tower auto-attack (tower has no def value, units do)
-  G.bldgs.filter(b=>b.type==='tower'&&!b.uc).forEach(tw=>{
-    G.units.filter(u=>u.owner!==tw.owner
-      && Math.abs(u.x-tw.x)+Math.abs(u.y-tw.y)<=BD.tower.rng
-      && G.fog[tw.owner-1][u.y][u.x]==='v')
-    .slice(0,1).forEach(u=>{
-      const dmg=Math.max(1, BD.tower.atk - (u.def||0));
-      u.hp-=dmg;
-      hitFx(u.x,u.y);
-      if(u.hp<=0) dead.add(u.id);
-    });
-  });
-
-  // Resolve deaths — hp is only written down here, no regen anywhere
-  dead.forEach(id=>{
-    const ui=G.units.findIndex(u=>u.id===id);
-    if(ui!==-1){
-      const u=G.units[ui];
-      G.res[u.owner].food-=u.food;
-      glog(`💀 ${dsp(u)} 陣亡`);
-      G.units.splice(ui,1);
-      SEL.selUnits=SEL.selUnits.filter(u=>u.id!==id);
-    }
-    const bi=G.bldgs.findIndex(b=>b.id===id);
-    if(bi!==-1){
-      const b=G.bldgs[bi];
-      if(b.type==='townhall'){G.over=true;G.winner=b.owner===1?2:1;showWin();}
-      // Refund food capacity — only if building was completed
-      if(b.type==='farm'&&!b.uc) G.res[b.owner].foodMax-=BD.farm.food;
-      if(b.type==='townhall'&&!b.uc) G.res[b.owner].foodMax-=BD.townhall.food;
-      glog(`💥 ${dsp(b)} 被摧毀`);
-      G.bldgs.splice(bi,1);
-      if(SEL.selBldg?.id===id) resetSel();
-    }
-  });
-
-  // Building construction
-  G.bldgs.forEach(b=>{
-    if(b.uc&&b.bp<b.bt){
-      b.bp++;
-      if(b.bp>=b.bt){
-        b.uc=false;
-        glog(`✅ ${b.type} 建造完成 (${cs(b.x,b.y)})`);
-        if(BD[b.type].food) G.res[b.owner].foodMax+=BD[b.type].food;
-        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
-      }
-    }
-    // Training queue
-    if(!b.uc&&b.tq.length>0){
-      b.tp++;
-      const need=b.tq[0]==='worker'?12:b.tq[0]==='soldier'?10:14;
-      if(b.tp>=need){
-        const ut=b.tq.shift(); b.tp=0;
-        const pos=nearEmpty(b.x,b.y);
-        if(pos){ addUnit(ut,b.owner,pos[0],pos[1]); glog(`🎖️ ${ut} 訓練完成`); }
-        if(SEL.selBldg?.id===b.id) showBldgPanel(b);
-      }
-    } else if(!b.uc&&b.tq.length===0){
-      b.tp=0; // reset counter when queue is empty
-    }
-  });
-
-  // (AI disabled in solo test mode)
-  updateFog(); updateHUD(); render();
+function updateDragBox(cx,cy){
+  const db=el('dragbox'),wrap=el('map-wrap'),r=wrap.getBoundingClientRect();
+  const ax=Math.min(PT.startX,cx)-r.left+wrap.scrollLeft;
+  const ay=Math.min(PT.startY,cy)-r.top+wrap.scrollTop;
+  const bx=Math.max(PT.startX,cx)-r.left+wrap.scrollLeft;
+  const by=Math.max(PT.startY,cy)-r.top+wrap.scrollTop;
+  db.style.display='block';db.style.left=ax+'px';db.style.top=ay+'px';
+  db.style.width=(bx-ax)+'px';db.style.height=(by-ay)+'px';
+}
+function finalizeDrag(ex,ey){
+  const wrap=el('map-wrap'),r=wrap.getBoundingClientRect();
+  const ax=Math.min(PT.startX,ex)-r.left+wrap.scrollLeft;
+  const ay=Math.min(PT.startY,ey)-r.top+wrap.scrollTop;
+  const bx=Math.max(PT.startX,ex)-r.left+wrap.scrollLeft;
+  const by=Math.max(PT.startY,ey)-r.top+wrap.scrollTop;
+  const gx0=Math.floor(ax/CS),gy0=Math.floor(ay/CS),gx1=Math.floor(bx/CS),gy1=Math.floor(by/CS);
+  const myP=G.myP||1;
+  const sel=G.units.filter(u=>u.owner===myP&&u.x>=gx0&&u.x<=gx1&&u.y>=gy0&&u.y<=gy1);
+  setBoxMode(false);
+  if(sel.length>0){SEL.phase='sel';SEL.selUnits=sel;SEL.selBldg=null;showMultiPanel(sel);}
+  else resetSel();
+  render();
 }
 
 // ════════════════════════════════════
-// AI
+// TAP LOGIC
 // ════════════════════════════════════
-function aiAct(){
-  const p=G.res[2];
-  const myU=G.units.filter(u=>u.owner===2);
-  const myB=G.bldgs.filter(b=>b.owner===2);
-  const workers=myU.filter(u=>u.type==='worker');
-  const fighters=myU.filter(u=>u.type==='soldier'||u.type==='archer');
-  const th=myB.find(b=>b.type==='townhall');
-  const barr=myB.find(b=>b.type==='barracks'&&!b.uc);
+function onTap(x,y){
+  if(!G.map||!G.map[y]) return;
+  const myP=G.myP||1;
+  const f=fog1(x,y);
+  const terrain=G.map[y][x];
+  const myBldg=G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner===myP);
+  const myUnit=G.units.find(u=>u.x===x&&u.y===y&&u.owner===myP);
+  const enBldg=f===2?G.bldgs.find(b=>b.x===x&&b.y===y&&b.owner!==myP):null;
+  const enUnit=f===2?G.units.find(u=>u.x===x&&u.y===y&&u.owner!==myP):null;
 
-  // Workers: keep harvesting
-  workers.forEach(w=>{
-    if(!w.act||w.act==='move'){
-      const gm=nearTile(w.x,w.y,T.G); if(gm){w.act='harvest';w.tgt=gm;}
+  // Build placement phase
+  if(SEL.phase==='build_place'){
+    if(canBuild(x,y)){
+      const worker=SEL.selUnits.find(u=>u.type==='worker');
+      if(worker&&Math.abs(x-worker.x)<=2&&Math.abs(y-worker.y)<=2){
+        execBuild(x,y);
+      } else glog('❌ 超出建造範圍（Worker 5×5 格內）');
+    } else glog('❌ 無法在此建造');
+    const w=SEL.selUnits.find(u=>u.type==='worker');
+    if(w){SEL.phase='sel';SEL.buildType=null;showUnitPanel(w);render();}
+    else resetSel();
+    return;
+  }
+
+  if(SEL.selUnits.length>0){
+    const units=SEL.selUnits;
+    // Own unit → switch selection
+    if(myUnit){selectUnit(myUnit);return;}
+    if(myBldg){selectBldg(myBldg);return;}
+    // Enemy → attack
+    if(enUnit||enBldg){
+      const tgt=enUnit||enBldg;
+      doAttack(units,tgt.id);
+      glog('⚔️ '+units.length+'個單位攻擊 '+dsp(tgt));
+      refreshSelPanel(); return;
     }
-  });
-
-  // Build farm if food capped
-  if(p.food>=p.foodMax-1&&p.gold>=60&&p.wood>=30&&!myB.find(b=>b.type==='farm'&&b.uc)){
-    const pos=nearEmpty(th?.x||22,th?.y||10,4);
-    if(pos){addBldg('farm',2,pos[0],pos[1],true);p.gold-=60;p.wood-=30;}
+    // Damaged own building with workers → repair
+    if(myBldg&&myBldg.hp<myBldg.mhp){
+      const wks=units.filter(u=>u.type==='worker');
+      if(wks.length>0){doRepair(wks,myBldg.id);glog('🔧 修復 '+myBldg.type);refreshSelPanel();return;}
+    }
+    // Resource → harvest
+    if(terrain===T.G||terrain===T.W){
+      const wks=units.filter(u=>u.type==='worker');
+      if(wks.length>0){doHarvest(wks,x,y);glog('⛏️ 採集 '+(terrain===T.G?'💰':'🌲'));refreshSelPanel();return;}
+    }
+    // Walkable → move
+    if(canWalk(x,y)){doMove(units,x,y);glog('🚶 '+units.length+'個單位→'+cs(x,y));refreshSelPanel();return;}
+    resetSel(); return;
   }
-  // Build barracks
-  if(!myB.find(b=>b.type==='barracks')&&p.gold>=120&&p.wood>=50){
-    const pos=nearEmpty(th?.x||22,th?.y||10,5);
-    if(pos){addBldg('barracks',2,pos[0],pos[1],true);p.gold-=120;p.wood-=50;}
-  }
-  // Train soldiers
-  if(barr&&p.gold>=80&&p.food<p.foodMax){barr.tq.push('soldier');p.gold-=80;}
-  // Train worker if low
-  if(workers.length<2&&th&&p.gold>=50&&!th.tq.length){th.tq.push('worker');p.gold-=50;}
 
-  // Attack
-  const p1th=G.bldgs.find(b=>b.owner===1&&b.type==='townhall');
-  fighters.forEach(s=>{
-    if(s.act==='attack'&&byId(s.tgt)) return; // already attacking something alive
-    const near=G.units.find(u=>u.owner===1&&Math.abs(u.x-s.x)+Math.abs(u.y-s.y)<=8);
-    if(near){s.act='attack';s.tgt=near.id;}
-    else if(p1th){s.act='move';s.tgt=[p1th.x,p1th.y];}
-  });
+  // Nothing selected
+  if(myUnit){selectUnit(myUnit);return;}
+  if(myBldg){selectBldg(myBldg);return;}
+  if(enUnit||enBldg){
+    const e=enUnit||enBldg;
+    setInfo('👁️','敵方 '+(IC['e_'+e.type]||e.type),'HP '+e.hp+'/'+e.mhp,'');
+    setActions('<span class="hint">先選我方士兵，再點此敵人攻擊</span>');return;
+  }
+  if(terrain===T.G){setInfo('💎','金礦','可採集','');setActions('<span class="hint">先選👷Worker，再點此採集</span>');return;}
+  if(terrain===T.W){setInfo('🌳','樹林','可砍伐','');setActions('<span class="hint">先選👷Worker，再點此採集</span>');return;}
+  if(terrain===T.M){setInfo('⛰️','山地','不可通行','');setActions('');return;}
+  resetSel();
 }
 
 // ════════════════════════════════════
-// UTILS
+// ACTIONS (multiplayer-aware)
+// ════════════════════════════════════
+function doMove(units,tx,ty){
+  if(gameMode==='guest') sendCmd({act:'move',ids:units.map(u=>u.id),tx,ty});
+  assignSpreadMove(units,tx,ty);
+}
+function doAttack(units,tgtId){
+  if(gameMode==='guest') sendCmd({act:'attack',ids:units.map(u=>u.id),tgt:tgtId});
+  units.forEach(u=>{u.act='attack';u.tgt=tgtId;});
+}
+function doHarvest(units,tx,ty){
+  if(gameMode==='guest') sendCmd({act:'harvest',ids:units.map(u=>u.id),tx,ty});
+  units.forEach(u=>{u.act='harvest';u.tgt=[tx,ty];});
+}
+function doRepair(units,bldgId){
+  if(gameMode==='guest') sendCmd({act:'repair',ids:units.map(u=>u.id),tgt:bldgId});
+  units.forEach(u=>{u.act='repair';u.tgt=bldgId;});
+}
+function execBuild(x,y){
+  const type=SEL.buildType;
+  const d=BD[type],p=G.res[G.myP||1];
+  if(p.gold<d.cost.g||p.wood<d.cost.w){glog('❌ 資源不足');return;}
+  const worker=SEL.selUnits.find(u=>u.type==='worker');
+  if(!worker) return;
+  if(gameMode==='guest'){
+    sendCmd({act:'build',ids:[worker.id],btype:type,tx:x,ty:y});
+    p.gold-=d.cost.g;p.wood-=d.cost.w;
+  } else {
+    p.gold-=d.cost.g;p.wood-=d.cost.w;
+    addBldg(type,G.myP||1,x,y,true);
+  }
+  worker.act='move';worker.tgt=[x,y];
+  glog('🏗️ 建造 '+type+' → '+cs(x,y));
+  updateHUD();
+}
+function doTrain(bldgId,utype){
+  const b=G.bldgs.find(b=>b.id===bldgId);if(!b)return;
+  const p=G.res[G.myP||1],cost=UD[utype].cost.g;
+  if(p.gold<cost){glog('❌ 金幣不足');return;}
+  if(utype!=='worker'&&p.food>=p.foodMax){glog('❌ 食物已滿');return;}
+  if(gameMode==='guest') sendCmd({act:'train',bid:bldgId,utype});
+  p.gold-=cost; b.tq.push(utype);
+  glog('✅ '+utype+' 加入訓練');
+  updateHUD(); showBldgPanel(b);
+}
+
+// ════════════════════════════════════
+// PANELS
+// ════════════════════════════════════
+function selectUnit(u){
+  SEL.phase='sel';SEL.selUnits=[u];SEL.selBldg=null;
+  const myP=G.myP||1;
+  const lbl=u.owner!==myP?(IC['e_'+u.type]||'敵單位'):(IC[u.type]||u.type);
+  setInfo('⚔️',lbl,'HP '+u.hp+'/'+u.mhp+'  DEF '+(u.def||0),stateStr(u));
+  showUnitPanel(u);render();
+}
+function selectBldg(b){
+  SEL.phase='sel';SEL.selUnits=[];SEL.selBldg=b;
+  const myP=G.myP||1;
+  const lbl=b.owner!==myP?(IC['e_'+b.type]||'敵建築'):(IC[b.type]||b.type);
+  setInfo('🏛️',lbl+(b.uc?' (建造中)':''),'HP '+b.hp+'/'+b.mhp,b.tq?.length?'隊列:'+b.tq.length:'');
+  showBldgPanel(b);render();
+}
+function showUnitPanel(u){
+  const p=G.res[G.myP||1];let html='';
+  if(u.type==='worker'){
+    html+='<span class="hint">點地圖移動・點💰🌲採集・點受損建築修復・點敵人攻擊</span>';
+    html+=ab('🌾 建農場','60🪙30🌲',p.gold>=60&&p.wood>=30,"startBuild('farm')");
+    html+=ab('⚔️ 建兵營','120🪙50🌲',p.gold>=120&&p.wood>=50,"startBuild('barracks')");
+    html+=ab('🗼 建箭塔','150🪙100🌲',p.gold>=150&&p.wood>=100,"startBuild('tower')");
+  } else {
+    html+='<span class="hint">點地圖移動・點敵人/建築攻擊</span>';
+  }
+  html+='<button class="ab" onclick="resetSel()">取消選擇</button>';
+  setInfo('⚔️',IC[u.type]||u.type,'HP '+u.hp+'/'+u.mhp+'  DEF '+(u.def||0),stateStr(u));
+  setActions(html);
+}
+function showBldgPanel(b){
+  if(b.uc){setActions('<span class="hint">建造中 '+b.bp+'/'+b.bt+' ticks</span><button class="ab" onclick="resetSel()">關閉</button>');return;}
+  const p=G.res[G.myP||1];let html='';
+  if(b.type==='townhall') html+=ab('👷 訓練Worker','50🪙',p.gold>=50,"doTrain('"+b.id+"','worker')");
+  if(b.type==='barracks'){
+    const hf=p.food<p.foodMax;
+    html+=ab('🗡️ 士兵','90🪙',p.gold>=90&&hf,"doTrain('"+b.id+"','soldier')");
+    html+=ab('🏹 弓手','100🪙',p.gold>=100&&hf,"doTrain('"+b.id+"','archer')");
+    if(!hf) html+='<span class="hint" style="color:var(--r)">⚠️ 食物已滿，請先建農場</span>';
+    if(b.tq.length) html+='<span class="hint">訓練隊列: '+b.tq.join(',')+'('+b.tp+'t)</span>';
+  }
+  if(b.type==='farm') html+='<span class="hint">提供 +5 食物上限</span>';
+  if(b.type==='tower') html+='<span class="hint">自動攻擊 '+BD.tower.rng+' 格內敵人 (ATK '+BD.tower.atk+')</span>';
+  html+='<button class="ab" onclick="resetSel()">關閉</button>';
+  setActions(html);
+}
+function showMultiPanel(units){
+  const t=[...new Set(units.map(u=>u.type))].join('+');
+  setInfo('⚔️',units.length+'個單位 ('+t+')','點地圖移動・點敵人攻擊','');
+  setActions('<span class="hint">點空地移動・點敵人攻擊</span><button class="ab" onclick="resetSel()">取消</button>');
+  render();
+}
+function refreshSelPanel(){
+  if(SEL.selUnits.length===1) selectUnit(SEL.selUnits[0]);
+  else if(SEL.selUnits.length>1) showMultiPanel(SEL.selUnits);
+  else if(SEL.selBldg) selectBldg(SEL.selBldg);
+  render();
+}
+function startBuild(type){
+  SEL.buildType=type;SEL.phase='build_place';
+  setInfo('🏗️','選擇建造位置','點綠色高亮的空地','');
+  setActions('<span class="hint">點空地 (綠框) 放置 '+type+'</span><button class="ab" onclick="resetSel()">取消</button>');
+  render();
+}
+
+// ════════════════════════════════════
+// UI HELPERS
 // ════════════════════════════════════
 function el(id){return document.getElementById(id);}
 function inB(x,y){return x>=0&&x<MW&&y>=0&&y<MH;}
 function cs(x,y){return String.fromCharCode(65+x)+(y+1);}
-function dsp(e){return (e.owner===2?'敵':'')+e.id.replace(/p\d$/,'');}
+function dsp(e){return(e.owner===2?'敵':'')+e.id.replace(/p\d$/,'');}
 function byId(id){return G.units.find(u=>u.id===id)||G.bldgs.find(b=>b.id===id);}
 function stateStr(u){
   if(!u.act) return '待機';
-  if(u.act==='move') return `移動→${u.tgt?cs(u.tgt[0],u.tgt[1]):''}`;
+  if(u.act==='move') return '移動→'+(u.tgt?cs(u.tgt[0],u.tgt[1]):'');
   if(u.act==='harvest') return '採集中';
   if(u.act==='attack') return '攻擊中';
   if(u.act==='repair') return '修復中';
   return u.act;
 }
-
-function canWalk(x,y){
-  if(!inB(x,y)) return false;
-  if(G.map[y][x]===T.M) return false;  // mountain
-  if(G.map[y][x]===T.G) return false;  // gold mine — can't walk on it
-  if(G.map[y][x]===T.W) return false;  // tree — can't walk on it
-  if(G.bldgs.find(b=>b.x===x&&b.y===y)) return false;
-  return true;
+function ab(label,cost,ok,cb){
+  return '<button class="ab'+(ok?'':' off')+'" '+(ok?'onclick="'+cb+'"':'')+'>'+label+'<span class="co">'+cost+'</span></button>';
 }
-function canBuild(x,y){
-  if(!inB(x,y)||G.map[y][x]!==T.E) return false;
-  return !G.bldgs.find(b=>b.x===x&&b.y===y);
-}
-
-// Pathfinding step: move one cell toward (tx,ty)
-// Pathfinding: never allow unit overlap or resource tile stepping
-function step(fx,fy,tx,ty,selfId){
-  const dx=tx-fx, dy=ty-fy;
-  if(!dx&&!dy) return null;
-  const sx=dx>0?1:dx<0?-1:0;
-  const sy=dy>0?1:dy<0?-1:0;
-  const cands=Math.abs(dx)>=Math.abs(dy)
-    ? [[fx+sx,fy],[fx,fy+sy],[fx+sx,fy+sy]]
-    : [[fx,fy+sy],[fx+sx,fy],[fx+sx,fy+sy]];
-  // Only move to cells with no other unit and walkable terrain
-  for(const [nx,ny] of cands){
-    if(!canWalk(nx,ny)) continue;
-    if(G.units.find(u=>u.id!==selfId&&u.x===nx&&u.y===ny)) continue;
-    return [nx,ny];
-  }
-  return null; // fully blocked, stay put
-}
-
-// Assign distinct destinations around (cx,cy) for multiple units
-// Units closest to target get the best spots
-function assignSpreadMove(units, cx, cy){
-  const cands=[];
-  for(let r=0;r<=4;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
-    if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
-    const nx=cx+dx, ny=cy+dy;
-    if(canWalk(nx,ny)) cands.push([nx,ny,Math.abs(dx)+Math.abs(dy)]);
-  }
-  cands.sort((a,b)=>a[2]-b[2]);
-
-  const sorted=[...units].sort((a,b)=>
-    (Math.abs(a.x-cx)+Math.abs(a.y-cy))-(Math.abs(b.x-cx)+Math.abs(b.y-cy)));
-
-  // Track spots claimed by this assignment AND already occupied by other units
-  const used=new Set(
-    G.units
-      .filter(u=>!units.find(v=>v.id===u.id)) // exclude the units being moved
-      .map(u=>`${u.x},${u.y}`)
-  );
-
-  sorted.forEach(u=>{
-    const spot=cands.find(([nx,ny])=>!used.has(`${nx},${ny}`));
-    if(spot){
-      used.add(`${spot[0]},${spot[1]}`);
-      u.act='move'; u.tgt=[spot[0],spot[1]];
-    } else {
-      // No free spot found, stay put
-      u.act=null; u.tgt=null;
-    }
-  });
-}
-
-
-function nearEmpty(cx,cy,r=4){
-  for(let rd=1;rd<=r;rd++) for(let dy=-rd;dy<=rd;dy++) for(let dx=-rd;dx<=rd;dx++){
-    const x=cx+dx,y=cy+dy;
-    if(canBuild(x,y)&&!G.units.find(u=>u.x===x&&u.y===y)) return [x,y];
-  } return null;
-}
-function nearTile(cx,cy,type){
-  let best=null,bd=999;
-  for(let y=0;y<MH;y++) for(let x=0;x<MW;x++) if(G.map[y][x]===type){
-    const d=Math.abs(x-cx)+Math.abs(y-cy); if(d<bd){bd=d;best=[x,y];}
-  } return best;
-}
-
-function hitFx(x,y){
-  const c=CE[`${x},${y}`]; if(!c) return;
-  c.el.classList.add('hit-fx');
-  setTimeout(()=>c.el.classList.remove('hit-fx'),360);
-}
-
-// ════════════════════════════════════
-// UI
-// ════════════════════════════════════
 function setInfo(icon,name,hp,state){
-  el('i-icon').textContent=icon;
-  el('i-name').textContent=name;
-  el('i-hp').textContent=hp;
-  el('i-state').textContent=state;
+  el('i-icon').textContent=icon;el('i-name').textContent=name;
+  el('i-hp').textContent=hp;el('i-state').textContent=state;
 }
 function setActions(html){el('action-bar').innerHTML=html;}
 function glog(msg){el('logbar').textContent=msg;}
 function updateHUD(){
   const p=G.res[G.myP||1];
-  el('h-gold').textContent=p.gold;
-  el('h-wood').textContent=p.wood;
-  el('h-food').textContent=p.food;
-  el('h-fmax').textContent=p.foodMax;
+  el('h-gold').textContent=p.gold;el('h-wood').textContent=p.wood;
+  el('h-food').textContent=p.food;el('h-fmax').textContent=p.foodMax;
 }
-
-function mkAbtn(label,cost,ok,cb){
-  return `<button class="ab${ok?'':' off'}" ${ok?`onclick="${cb}"`:''}>${label}<span class="co">${cost}</span></button>`;
+function hitFx(x,y){
+  const c=CE[`${x},${y}`];if(!c)return;
+  c.el.classList.add('hit-fx');
+  setTimeout(()=>c.el.classList.remove('hit-fx'),360);
 }
-
+function setBoxMode(on){
+  SEL.boxMode=on;
+  const btn=el('box-btn');if(!btn)return;
+  if(on){btn.textContent='✕ 取消框選';btn.style.borderColor='var(--y)';btn.style.color='var(--y)';}
+  else{btn.textContent='⬚ 框選';btn.style.borderColor='';btn.style.color='';}
+}
+function toggleBoxMode(){setBoxMode(!SEL.boxMode);}
 function cycleSpeed(){
   speedLv=speedLv===1?2:speedLv===2?4:1;
   el('speed-btn').textContent=speedLv+'x';
   clearInterval(tickTmr);
   tickTmr=setInterval(()=>{tick();if(G.over)clearInterval(tickTmr);},Math.round(TICK_MS/speedLv));
 }
-
 function showWin(){
   clearInterval(tickTmr);
-  const iWin = G.winner === (G.myP||1);
-  el('win-txt').textContent = iWin ? '🏆 勝利！' : '💀 敗北...';
-  el('win-sub').textContent = `Tick ${G.tick} — ${iWin ? '摧毀敵方主城！' : '主城被摧毀...'}`;
+  const iWin=G.winner===(G.myP||1);
+  el('win-txt').textContent=iWin?'🏆 勝利！':'💀 敗北...';
+  el('win-sub').textContent='Tick '+G.tick+' — '+(iWin?'摧毀敵方主城！':'主城被摧毀...');
   el('win-ovl').classList.add('show');
 }
-
 function goMenu(){
   clearInterval(tickTmr);
   cleanupRTC();
