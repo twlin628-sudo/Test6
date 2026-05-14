@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.3.0</title>
+<title>WAR.SH v1.3.2</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.3.0</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.3.2</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -159,7 +159,6 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
     <div class="hr"><span>🌲</span><span class="hr-v" id="h-wood">0</span></div>
     <div class="hr"><span>🍖</span><span class="hr-v" id="h-food">0</span><span class="hr-l">/</span><span class="hr-v" id="h-fmax">10</span></div>
     <div id="h-tick" style="margin-left:auto;font-family:'Share Tech Mono';font-size:11px;color:var(--dim)">T0</div>
-    <button id="speed-btn" onclick="cycleSpeed()">1x</button>
     <button id="menu-btn" onclick="goMenu()">離開</button>
   </div>
   <div id="map-wrap">
@@ -183,6 +182,13 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 </div>
 
 <!-- WIN -->
+<!-- Disconnect -->
+<div class="ovl" id="dc-ovl">
+  <div class="ovl-t" style="font-size:1.4rem;color:var(--y)">⚠️ 對方斷線</div>
+  <div class="ovl-s">連線已中斷</div>
+  <button class="ovl-btn" onclick="goMenu()">返回主選單</button>
+</div>
+
 <div id="win-ovl">
   <div id="win-txt"></div>
   <div id="win-sub"></div>
@@ -192,7 +198,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <script>
 'use strict';
 // ════════════════════════════════════
-// WAR.SH v1.3.0 — Rewritten Architecture
+// WAR.SH v1.3.2 — Rewritten Architecture
 // ════════════════════════════════════
 const MW=24,MH=20,CS=44,TICK_MS=1000;
 const T={E:0,G:1,W:2,M:3};
@@ -383,7 +389,7 @@ const SPC={
 // GAME STATE
 // ════════════════════════════════════
 let G={};
-let tickTmr=null, speedLv=1, gameMode='solo';
+let tickTmr=null, gameMode='solo';
 
 function newG(myP=1){
   return {
@@ -721,7 +727,11 @@ function setupDataChannel(ch){
     setTimeout(()=>{closePeer(); if(peerRole==='host') startHost(); else startGuest();},600);
   };
   ch.onmessage=e=>onPeerMsg(JSON.parse(e.data));
-  ch.onclose=()=>glog('⚠️ 對方斷線');
+  ch.onclose=()=>{
+    glog('⚠️ 對方斷線');
+    clearInterval(tickTmr);
+    el('dc-ovl').classList.add('show');
+  };
   ch.onerror=()=>glog('❌ 連線錯誤');
 }
 function sendRaw(obj){if(dataChannel&&dataChannel.readyState==='open') dataChannel.send(JSON.stringify(obj));}
@@ -837,7 +847,7 @@ function startHost(){gameMode='host'; initGame(1); hostMapSent=false; netSeq=0;
 function startGuest(){
   gameMode='guest'; lastSeq=0;
   initGame(2);
-  el('speed-btn').style.display='none';
+
   clearInterval(tickTmr); tickTmr=null;
   setTimeout(()=>{const w=el('map-wrap');w.scrollLeft=MW*CS-w.clientWidth;w.scrollTop=Math.max(0,10*CS-w.clientHeight/2);},50);
   glog('✅ Guest 已連線，等待遊戲資料...');
@@ -846,7 +856,7 @@ function startGuest(){
 function initGame(myP){
   clearInterval(tickTmr);
   G=newG(myP);
-  speedLv=1; el('speed-btn').textContent='1x';
+
   buildMap(); buildTileIndex(); placeStart();
   fogRevealers={1:[],2:[]};
   updateFog();
@@ -868,16 +878,55 @@ function buildMap(){
   G.map=[];
   for(let y=0;y<MH;y++){G.map.push([]); for(let x=0;x<MW;x++) G.map[y].push(T.E);}
   initFog();
-  [[5,5],[6,5],[5,6],[7,8],[8,8],[16,11],[17,11],[16,12],[11,9],[12,9],[11,10]].forEach(([x,y])=>setTile(x,y,T.M));
-  [[3,2],[4,3],[3,4],[17,15],[18,16],[17,14],[8,3],[9,4],[14,14],[15,15],[6,9],[7,10],[13,8],[14,9],[10,3],[11,4],[13,16],[14,17]].forEach(([x,y])=>setTile(x,y,T.W));
-  [[2,2],[20,2],[2,17],[20,17],[11,7],[11,13]].forEach(([x,y])=>setTile(x,y,T.G));
+
+  // Random resources: 6 gold mines, 14 tree clusters, all randomly placed
+  const placed=new Set();
+  function randPlace(type, count){
+    let tries=0;
+    while(count>0&&tries<500){
+      tries++;
+      const x=1+Math.floor(Math.random()*(MW-2));
+      const y=1+Math.floor(Math.random()*(MH-2));
+      const k=`${x},${y}`;
+      if(!placed.has(k)){placed.add(k);G.map[y][x]=type;count--;}
+    }
+  }
+  randPlace(T.G,6);
+  randPlace(T.W,18);
 }
-function setTile(x,y,t){if(inB(x,y))G.map[y][x]=t;}
 
 function placeStart(){
-  addBldg('townhall',1,1,9); addBldg('townhall',2,22,10);
-  addUnit('worker',1,2,9); addUnit('worker',1,1,10);
-  addUnit('worker',2,21,10); addUnit('worker',2,22,9);
+  function randSpawn(){
+    let tries=0;
+    while(tries<300){
+      tries++;
+      const x=1+Math.floor(Math.random()*(MW-2));
+      const y=1+Math.floor(Math.random()*(MH-2));
+      // Ensure 3x3 area is within bounds
+      let ok=true;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+        if(!inB(x+dx,y+dy)){ok=false;break;}
+      }
+      if(!ok) continue;
+      // Clear 5x5 around spawn
+      for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++){
+        const nx=x+dx,ny=y+dy;
+        if(inB(nx,ny)) G.map[ny][nx]=T.E;
+      }
+      return [x,y];
+    }
+    return [2,2];
+  }
+
+  const [p1x,p1y]=randSpawn();
+  const [p2x,p2y]=randSpawn();
+
+  addBldg('townhall',1,p1x,p1y);
+  addBldg('townhall',2,p2x,p2y);
+  addUnit('worker',1,p1x+1,p1y);
+  addUnit('worker',1,p1x,p1y+1);
+  addUnit('worker',2,p2x-1,p2y);
+  addUnit('worker',2,p2x,p2y-1);
 }
 
 function addBldg(type,owner,x,y,uc=false){
@@ -1404,12 +1453,6 @@ function setBoxMode(on){
   else{btn.textContent='⬚ 框選';btn.style.borderColor='';btn.style.color='';}
 }
 function toggleBoxMode(){setBoxMode(!SEL.boxMode);}
-function cycleSpeed(){
-  speedLv=speedLv===1?2:speedLv===2?4:1;
-  el('speed-btn').textContent=speedLv+'x';
-  clearInterval(tickTmr);
-  tickTmr=setInterval(()=>{tick();if(G.over)clearInterval(tickTmr);},Math.round(TICK_MS/speedLv));
-}
 function showWin(){
   clearInterval(tickTmr);
   const iWin=G.winner===(G.myP||1);
@@ -1422,7 +1465,7 @@ function goMenu(){
   cleanupRTC();
   el('game').style.display='none';
   el('win-ovl').classList.remove('show');
-  el('speed-btn').style.display='';
+  el('dc-ovl').classList.remove('show');
   el('menu').style.display='flex';
   resetSel();
 }
