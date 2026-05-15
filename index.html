@@ -481,6 +481,7 @@ function posOccupied(x,y){
 // Layer 3: HP bar width (only when HP changes)
 // ════════════════════════════════════
 // Per-cell cache — flat arrays indexed by y*MW+x (integer index, faster than string keys)
+let CE={}; // "x,y" -> {el, ci, hpb, hpf}
 let fogCache=new Uint8Array(MW*MH);   // fog value 0/1/2
 let sprCache=new Array(MW*MH).fill(''); // sprite key string
 let hpCache =new Array(MW*MH).fill(''); // "pct|cls" string
