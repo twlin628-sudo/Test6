@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>WAR.SH v1.3.2</title>
+<title>WAR.SH v1.3.3</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap');
 :root{
@@ -133,7 +133,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <!-- MENU -->
 <div id="menu">
   <div class="logo">WAR.SH</div>
-  <div class="logo-sub">點選即時戰略 &nbsp;v1.3.2</div>
+  <div class="logo-sub">點選即時戰略 &nbsp;v1.3.3</div>
   <button class="mbtn pri" onclick="startSolo()">單人測試 (AI對手)</button>
   <button class="mbtn" onclick="openPeer('host')">Host — 開房間</button>
   <button class="mbtn" onclick="openPeer('guest')">Guest — 加入房間</button>
@@ -198,7 +198,7 @@ body{font-family:'Rajdhani',sans-serif;display:flex;flex-direction:column;height
 <script>
 'use strict';
 // ════════════════════════════════════
-// WAR.SH v1.3.2 — Rewritten Architecture
+// WAR.SH v1.3.3 — Rewritten Architecture
 // ════════════════════════════════════
 const MW=24,MH=20,CS=44,TICK_MS=1000;
 const T={E:0,G:1,W:2,M:3};
@@ -429,31 +429,30 @@ function initFog(){
 let fogRevealers={1:[], 2:[]};// [owner] -> [{x,y,vis}] previous positions
 
 function updateFog(){
-  // Decay vis(2)→seen(1) only for cells we previously revealed
-  // Then re-reveal from current positions
   const allE=[...G.units,...G.bldgs];
   const newRevealers={1:[],2:[]};
 
-  // Decay previous visible cells
+  // Decay vis→seen for previously revealed area
   for(const p of [1,2]){
-    for(const {x,y,vis} of fogRevealers[p]){
-      const v=vis||(BD['tower']?.rng?BD['tower'].rng+1:2);
-      for(let dy=-v-1;dy<=v+1;dy++) for(let dx=-v-1;dx<=v+1;dx++){
+    for(const {x,y,v} of fogRevealers[p]){
+      const r=v+1; // decay one extra ring
+      for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
         const nx=x+dx,ny=y+dy;
         if(inB(nx,ny)&&G.fog[p-1][ny][nx]===2) G.fog[p-1][ny][nx]=1;
       }
     }
   }
 
-  // Reveal from current entity positions
+  // Reveal from current positions
   for(const e of allE){
     const p=e.owner-1;
-    const v=e.vis||(BD[e.type]?.rng?BD[e.type].rng+1:2);
+    // Cache vis value: units have e.vis, buildings use range+1 or default 2
+    const v=e.vis??(BD[e.type]?.rng?BD[e.type].rng+1:2);
     for(let dy=-v;dy<=v;dy++) for(let dx=-v;dx<=v;dx++){
       const nx=e.x+dx,ny=e.y+dy;
       if(inB(nx,ny)&&Math.abs(dx)+Math.abs(dy)<=v+1) G.fog[p][ny][nx]=2;
     }
-    newRevealers[e.owner].push({x:e.x,y:e.y,vis:v});
+    newRevealers[e.owner].push({x:e.x,y:e.y,v}); // store v not vis to avoid recompute
   }
   fogRevealers=newRevealers;
 }
@@ -481,11 +480,10 @@ function posOccupied(x,y){
 // Layer 2: sprite innerHTML (only when content changes)
 // Layer 3: HP bar width (only when HP changes)
 // ════════════════════════════════════
-let CE={}; // "x,y" -> {el, ci, hpb, hpf}
-// Per-cell cache — separate keys for each layer
-let fogCache={};  // "x,y" -> fog value 0/1/2
-let sprCache={};  // "x,y" -> sprite key string
-let hpCache={};   // "x,y" -> "pct:cls" string
+// Per-cell cache — flat arrays indexed by y*MW+x (integer index, faster than string keys)
+let fogCache=new Uint8Array(MW*MH);   // fog value 0/1/2
+let sprCache=new Array(MW*MH).fill(''); // sprite key string
+let hpCache =new Array(MW*MH).fill(''); // "pct|cls" string
 let prevSelKeys=new Set();
 let prevBuildKeys=new Set();
 
@@ -494,7 +492,10 @@ function buildDOM(){
   canvas.innerHTML='';
   canvas.style.width=(MW*CS)+'px';
   canvas.style.height=(MH*CS)+'px';
-  CE={}; fogCache={}; sprCache={}; hpCache={};
+  CE={};
+  fogCache=new Uint8Array(MW*MH);
+  sprCache=new Array(MW*MH).fill('');
+  hpCache =new Array(MW*MH).fill('');
   prevSelKeys=new Set(); prevBuildKeys=new Set();
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const d=document.createElement('div');
@@ -518,40 +519,32 @@ function buildDOM(){
 
 function render(){
   const myP=G.myP||1;
-  // Build lookup maps for this render pass
-  const bAt={};
-  for(const b of G.bldgs) bAt[`${b.x},${b.y}`]=b;
-  const uAt={};
-  for(const u of G.units){
-    const k=`${u.x},${u.y}`;
-    if(!uAt[k]) uAt[k]=[];
-    uAt[k].push(u);
-  }
+  // Use tick-built lookup maps (set in tick(), avoids rebuilding each render)
+  const bAt=tickBAt, uAt=tickUAt;
 
   for(let y=0;y<MH;y++) for(let x=0;x<MW;x++){
     const c=CE[`${x},${y}`]; if(!c) continue;
-    const k=`${x},${y}`;
+    const idx=y*MW+x; // integer index — faster than string key
     const f=fog1(x,y); // 0|1|2
 
     // ── Layer 1: fog class ──
-    if(fogCache[k]!==f){
-      fogCache[k]=f;
+    if(fogCache[idx]!==f){
+      fogCache[idx]=f;
       const fc=f===0?'fog':f===1?'seen':'vis';
-      // preserve highlight classes
       const hl=c.el.classList.contains('h-sel')?'h-sel':c.el.classList.contains('h-build')?'h-build':'';
       c.el.className='cell '+fc+(hl?' '+hl:'');
     }
 
     if(f===0){
-      // ensure sprite cleared
-      if(sprCache[k]!==''){sprCache[k]='';c.ci.innerHTML='';c.hpb.style.display='none';hpCache[k]='';}
+      if(sprCache[idx]!==''){sprCache[idx]='';c.ci.innerHTML='';c.hpb.style.display='none';hpCache[idx]='';}
       continue;
     }
 
     // ── Layer 2: sprite ──
+    const k=`${x},${y}`;
     const t=G.map[y]?.[x]??T.E;
     let sprKey=t===T.G?'gold':t===T.W?'tree':t===T.M?'mountain':'';
-    let showHp=false, hp=0, mhp=1, isEn=false, multi=false;
+    let showHp=false,hp=0,mhp=1,isEn=false,multi=false;
 
     const b=bAt[k];
     if(b&&(f===2||b.owner===myP)){
@@ -561,16 +554,13 @@ function render(){
     const us=uAt[k];
     if(us&&f===2){
       const show=us.find(u=>u.owner===myP)||us[0];
-      if(show){
-        sprKey=show.owner!==myP?'e_'+show.type:show.type;
-        hp=show.hp; mhp=show.mhp; isEn=show.owner!==myP; showHp=true;
-      }
+      if(show){sprKey=show.owner!==myP?'e_'+show.type:show.type; hp=show.hp;mhp=show.mhp;isEn=show.owner!==myP;showHp=true;}
       if(us.length>1) multi=true;
     }
 
     const fullSprKey=sprKey+(multi?'+':'');
-    if(sprCache[k]!==fullSprKey){
-      sprCache[k]=fullSprKey;
+    if(sprCache[idx]!==fullSprKey){
+      sprCache[idx]=fullSprKey;
       c.ci.innerHTML=sprKey&&SPC[sprKey]
         ? SPC[sprKey]+(multi?'<div style="position:absolute;top:1px;right:2px;font-size:9px;color:#ffcc44;font-family:monospace">+</div>':'')
         : '';
@@ -581,14 +571,14 @@ function render(){
       const pct=Math.max(0,Math.round(hp/mhp*100));
       const cls=isEn?'en':pct<30?'lo':'my';
       const hpKey=pct+'|'+cls;
-      if(hpCache[k]!==hpKey){
-        hpCache[k]=hpKey;
+      if(hpCache[idx]!==hpKey){
+        hpCache[idx]=hpKey;
         c.hpb.style.display='block';
         c.hpf.style.width=pct+'%';
         c.hpf.className='hpf '+cls;
       }
-    } else if(hpCache[k]!=='none'){
-      hpCache[k]='none';
+    } else if(hpCache[idx]!=='none'){
+      hpCache[idx]='none';
       c.hpb.style.display='none';
     }
   }
@@ -621,8 +611,19 @@ function applyHighlights(){
   prevBuildKeys=buildKeys;
 }
 
-// ════════════════════════════════════
-// FIREBASE SIGNALING + WebRTC
+// Shared lookup maps built once per tick, used by tick() and render()
+let tickBAt={}, tickUAt={};
+
+function buildTickMaps(){
+  tickBAt={};
+  for(const b of G.bldgs) tickBAt[`${b.x},${b.y}`]=b;
+  tickUAt={};
+  for(const u of G.units){
+    const k=`${u.x},${u.y}`;
+    if(!tickUAt[k]) tickUAt[k]=[];
+    tickUAt[k].push(u);
+  }
+}
 // ════════════════════════════════════
 const FB_CONFIG={
   apiKey:"AIzaSyCCshqyIyhQ86R3wZ8zH2kd-hL8vKiEtSU",
@@ -796,7 +797,7 @@ function onPeerMsg(msg){
     G.bldgs=msg.b.map(unpackB);
     G.units=msg.u.map(unpackU);
     G.myP=2;
-
+    buildTickMaps(); // ensure render() has fresh bAt/uAt
     el('h-tick').textContent='T'+G.tick;
     updateHUD(); render();
     if(G.over) showWin();
@@ -955,7 +956,8 @@ function tick(){
   G.tick++;
   el('h-tick').textContent='T'+G.tick;
 
-  buildPosMap(); // O(N) once per tick, enables O(1) lookups below
+  buildPosMap();
+  buildTickMaps(); // build bAt/uAt once, shared with render()
   const dead=new Set();
 
   G.units.forEach(u=>{
