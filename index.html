@@ -958,7 +958,6 @@ function tick(){
   el('h-tick').textContent='T'+G.tick;
 
   buildPosMap();
-  buildTickMaps(); // build bAt/uAt once, shared with render()
   const dead=new Set();
 
   G.units.forEach(u=>{
@@ -1085,7 +1084,9 @@ function tick(){
     } else if(!b.uc&&b.tq.length===0) b.tp=0;
   }
 
-  updateFog(); updateHUD(); render();
+  updateFog(); updateHUD();
+  buildTickMaps(); // rebuild after movement so render() uses post-move positions
+  render();
 }
 
 // ════════════════════════════════════
